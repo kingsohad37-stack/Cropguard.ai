@@ -7,20 +7,25 @@ from PIL import Image, UnidentifiedImageError
 st.set_page_config(page_title="CropGuard AI", page_icon="🌿", layout="wide")
 st.title("🌿 CropGuard AI")
 st.caption("PlantVillage-trained MobileNetV2 • real inference • live Grad-CAM")
+
 with st.sidebar:
-    api = st.text_input("Backend URL", os.environ.get("CROPGUARD_API_URL", "http://localhost:8000"))
+    configured_api = os.environ.get("CROPGUARD_API_URL", "http://localhost:8000").strip().rstrip("/")
+    if configured_api and not configured_api.startswith(("http://", "https://")):
+        configured_api = "https://" + configured_api
+    api = st.text_input("Backend URL", configured_api).strip().rstrip("/")
     health = None
     try:
-        # Free Render instances can take close to a minute to wake up after
-        # inactivity. Do not treat that normal cold start as a missing model.
-        health = requests.get(f"{api}/health", timeout=75).json()
+        health_response = requests.get(f"{api}/health", timeout=20)
+        health_response.raise_for_status()
+        health = health_response.json()
         if health.get("model_loaded"):
             st.success("Real trained model loaded")
         else:
             st.warning("Model unavailable — train it before scanning.")
             st.caption(health.get("model_error", "No model loaded."))
-    except requests.RequestException:
+    except (requests.RequestException, ValueError) as exc:
         st.error("Backend unavailable")
+        st.caption(str(exc))
 
 upload = st.file_uploader("Upload a real leaf image", type=["jpg", "jpeg", "png", "webp"])
 camera = st.camera_input("Or capture a leaf with your camera")
@@ -64,7 +69,7 @@ if source and st.button("🔬 Analyze with trained model", type="primary", disab
 st.divider()
 st.subheader("Model evidence")
 try:
-    response = requests.get(f"{api}/metrics", timeout=75)
+    response = requests.get(f"{api}/metrics", timeout=20)
     if response.ok:
         metrics = response.json()
         st.write(f"Measured held-out test accuracy: **{metrics['test_accuracy'] * 100:.2f}%**")
@@ -75,7 +80,14 @@ except requests.RequestException:
 
 st.subheader("Actual scan history")
 try:
-    history = requests.get(f"{api}/history", timeout=75).json()
-    st.dataframe(history, use_container_width=True) if history else st.info("No scans yet.")
+    response = requests.get(f"{api}/history", timeout=20)
+    if response.ok:
+        history = response.json()
+        st.dataframe(history, use_container_width=True) if history else st.info("No scans yet.")
+    else:
+        st.info("Scan history is unavailable right now.")
 except requests.RequestException:
     st.info("Start the FastAPI backend to view scan history.")
+
+st.divider()
+st.caption("CropGuard uses genuine model inference only; no prediction results or confidence scores are hardcoded.")

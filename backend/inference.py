@@ -8,13 +8,15 @@ import threading
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 import tensorflow as tf
 
 IMG_SIZE = (224, 224)
+# Uploaded phone photos can be 10+ megapixels. Keeping the original image at
+# full resolution makes the Grad-CAM overlay allocate huge NumPy arrays on
+# Render's small instance. Prediction still uses the exact 224x224 model input.
+MAX_VISUAL_SIZE = (1280, 1280)
 
-# Render's free CPU instances are memory constrained. Serializing inference
-# prevents two simultaneous uploads from multiplying TensorFlow's peak RAM.
 _INFERENCE_LOCK = threading.Lock()
 
 
@@ -36,7 +38,6 @@ class InferenceEngine:
                 f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels."
             )
         self.grad_layer = self._find_last_conv_like_layer()
-        # Build a small inference-only Grad-CAM graph from the loaded layers.
         input_tensor = tf.keras.Input(shape=(*IMG_SIZE, 3), name="gradcam_input")
         features = self.grad_layer(input_tensor, training=False)
         output = features
@@ -64,9 +65,14 @@ class InferenceEngine:
         try:
             with Image.open(io.BytesIO(raw)) as decoded:
                 decoded.verify()
-            original = Image.open(io.BytesIO(raw)).convert("RGB")
+            with Image.open(io.BytesIO(raw)) as decoded:
+                original = ImageOps.exif_transpose(decoded).convert("RGB")
         except Exception as exc:
             raise ValueError("Upload is not a valid decodable image.") from exc
+
+        # Bound every image-sized allocation used by leaf masking and Grad-CAM
+        # rendering while preserving the uploaded image itself for its hash.
+        original.thumbnail(MAX_VISUAL_SIZE, Image.Resampling.LANCZOS)
         resized = original.resize(IMG_SIZE, Image.Resampling.BILINEAR)
         x = np.asarray(resized, dtype=np.float32)
         x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
@@ -88,8 +94,6 @@ class InferenceEngine:
         return mask
 
     def predict(self, raw: bytes) -> dict:
-        # Only one TensorFlow inference/Grad-CAM job at a time on the small
-        # Render instance. This is still genuine inference on the uploaded image.
         with _INFERENCE_LOCK:
             try:
                 original, x = self._preprocess(raw)
@@ -125,7 +129,7 @@ class InferenceEngine:
                 top_indices = np.argsort(vector)[::-1][: min(3, len(self.labels))]
 
                 heatmap_png = self._overlay(original, cam_np)
-                result = {
+                return {
                     "label": label,
                     "crop": crop,
                     "disease": disease,
@@ -140,10 +144,7 @@ class InferenceEngine:
                     "heatmap_coverage_percent": coverage,
                     "heatmap_png": heatmap_png,
                 }
-                return result
             finally:
-                # Release temporary TensorFlow/PIL/Numpy objects promptly so
-                # repeated scans do not accumulate memory on Render.
                 gc.collect()
 
     @staticmethod
@@ -155,13 +156,10 @@ class InferenceEngine:
 
     @staticmethod
     def _overlay(image: Image.Image, cam: np.ndarray) -> bytes:
-        # Generate the Grad-CAM overlay with PIL instead of Matplotlib. This
-        # avoids importing Matplotlib's large rendering stack for every scan.
         heat_small = Image.fromarray(np.uint8(cam * 255), mode="L")
         heat = heat_small.resize(image.size, Image.Resampling.BILINEAR)
         arr = np.asarray(heat, dtype=np.float32) / 255.0
 
-        # Lightweight jet-like RGB mapping, derived solely from Grad-CAM values.
         r = np.clip(1.5 - np.abs(4.0 * arr - 3.0), 0.0, 1.0)
         g = np.clip(1.5 - np.abs(4.0 * arr - 2.0), 0.0, 1.0)
         b = np.clip(1.5 - np.abs(4.0 * arr - 1.0), 0.0, 1.0)

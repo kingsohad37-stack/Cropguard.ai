@@ -20,23 +20,18 @@ class InferenceEngine:
     def __init__(self, model_path="models/plantvillage_best.keras", labels_path="models/labels.json"):
         model_path = Path(model_path)
         labels_path = Path(labels_path)
+        print(f"[CropGuard] REAL checkpoint path: {model_path} exists={model_path.exists()} size={model_path.stat().st_size if model_path.exists() else 0}", flush=True)
         if not model_path.exists():
             raise FileNotFoundError(f"REAL MODEL MISSING: {model_path}. Run the real data pipeline and training first.")
         if not labels_path.exists():
             raise FileNotFoundError(f"LABEL MAP MISSING: {labels_path}")
 
-        # Load the actual trained checkpoint. No mock model or generated predictions.
+        print(f"[CropGuard] Loading REAL trained checkpoint: {model_path}", flush=True)
         self.model = tf.keras.models.load_model(model_path, compile=False)
         self.labels = json.loads(labels_path.read_text())
         if self.model.output_shape[-1] != len(self.labels):
             raise RuntimeError(f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels.")
 
-        # The checkpoint is MobileNetV2 -> GlobalAveragePooling2D -> Dense.
-        # We intentionally do NOT construct a second Functional graph from the
-        # nested MobileNetV2 output: Keras 3 can reject that graph as
-        # disconnected even though the original trained model is valid.
-        # Instead, use the original model for probabilities and call its actual
-        # MobileNetV2 submodel directly with the exact MobileNet preprocessing.
         self.base_model = self._find_mobilenet_base()
         self.classifier = self._find_classifier()
         kernel = self.classifier.kernel
@@ -49,6 +44,7 @@ class InferenceEngine:
             _ = self.model(dummy, training=False)
         del dummy
         gc.collect()
+        print(f"[CropGuard] REAL TRAINED MODEL LOADED successfully: {model_path}", flush=True)
 
     def _find_mobilenet_base(self):
         for layer in self.model.layers:
@@ -80,21 +76,13 @@ class InferenceEngine:
         with _INFERENCE_LOCK:
             try:
                 original, x = self._preprocess(raw)
-
-                # Real prediction from the complete trained checkpoint.
                 with tf.device("/CPU:0"):
                     predictions = self.model(x, training=False)
-
-                    # Reproduce the trained MobileNetV2 preprocessing and run
-                    # the SAME nested backbone directly to obtain its real
-                    # feature maps without rebuilding the Keras graph.
                     mobile_x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
                     feature_maps = self.base_model(mobile_x, training=False)
 
                 class_index = tf.argmax(predictions[0], axis=-1)
                 idx = int(class_index.numpy())
-
-                # True CAM for GAP + Dense: sum_k(feature_k * classifier_weight[k,class]).
                 weights = self.classifier_weights[:, idx]
                 cam = tf.reduce_sum(feature_maps[0] * weights[None, None, :], axis=-1)
                 cam = tf.maximum(cam, 0.0)
@@ -102,9 +90,7 @@ class InferenceEngine:
                 cam = cam / (max_value + tf.keras.backend.epsilon())
                 cam_np = cam.numpy().astype(np.float32)
 
-                heat = Image.fromarray(np.uint8(cam_np * 255), mode="L").resize(
-                    original.size, Image.Resampling.BILINEAR
-                )
+                heat = Image.fromarray(np.uint8(cam_np * 255), mode="L").resize(original.size, Image.Resampling.BILINEAR)
                 heat_np = np.asarray(heat, dtype=np.float32) / 255.0
                 rgb = np.asarray(original).astype(np.float32) / 255.0
                 mx = rgb.max(axis=2)
@@ -131,10 +117,7 @@ class InferenceEngine:
                     "disease": disease,
                     "class_index": idx,
                     "confidence": float(predictions[0, idx].numpy()),
-                    "top_predictions": [
-                        {"label": self.labels[int(i)], "probability": float(vector[int(i)])}
-                        for i in top_indices
-                    ],
+                    "top_predictions": [{"label": self.labels[int(i)], "probability": float(vector[int(i)])} for i in top_indices],
                     "image_sha256": hashlib.sha256(raw).hexdigest(),
                     "severity_score": severity,
                     "heatmap_coverage_percent": coverage,

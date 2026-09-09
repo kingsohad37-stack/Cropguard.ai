@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: cropguard-api
+    runtime: python
+    plan: free
+    buildCommand: pip install --no-cache-dir -r requirements-api.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+  - type: web
+    name: cropguard-dashboard
+    runtime: python
+    plan: free
+    buildCommand: pip install --no-cache-dir -r requirements-ui.txt
+    startCommand: streamlit run frontend/app.py --server.address 0.0.0.0 --server.port $PORT --server.headless true
+    envVars:
+      - key: CROPGUARD_API_URL
+        sync: false

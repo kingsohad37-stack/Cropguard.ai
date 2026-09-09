@@ -11,6 +11,16 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: CUDA_VISIBLE_DEVICES
+        value: "-1"
+      - key: TF_NUM_INTRAOP_THREADS
+        value: "1"
+      - key: TF_NUM_INTEROP_THREADS
+        value: "1"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: MALLOC_ARENA_MAX
+        value: "2"
   - type: web
     name: cropguard-dashboard
     runtime: python
@@ -19,4 +29,4 @@ services:
     startCommand: streamlit run frontend/app.py --server.address 0.0.0.0 --server.port $PORT --server.headless true --server.enableCORS false --server.enableXsrfProtection false
     envVars:
       - key: CROPGUARD_API_URL
-        value: https://cropguard-api.onrender.com
+        value: https://cropguard-api-ppea.onrender.com

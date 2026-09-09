@@ -31,17 +31,13 @@ class InferenceEngine:
         if self.model.output_shape[-1] != len(self.labels):
             raise RuntimeError(f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels.")
 
-        # The trained model is MobileNetV2 -> GlobalAveragePooling2D -> Dense.
-        # That architecture supports a genuine Class Activation Map (CAM):
-        # feature maps are weighted by the real final Dense classifier weights.
-        # CAM avoids GradientTape's large activation/gradient memory spike on
-        # Render's 512 MB free instance while remaining model-derived.
+        # The checkpoint is MobileNetV2 -> GlobalAveragePooling2D -> Dense.
+        # We intentionally do NOT construct a second Functional graph from the
+        # nested MobileNetV2 output: Keras 3 can reject that graph as
+        # disconnected even though the original trained model is valid.
+        # Instead, use the original model for probabilities and call its actual
+        # MobileNetV2 submodel directly with the exact MobileNet preprocessing.
         self.base_model = self._find_mobilenet_base()
-        self.feature_model = tf.keras.Model(
-            self.model.inputs,
-            [self.base_model.output, self.model.output],
-            name="cropguard_cam",
-        )
         self.classifier = self._find_classifier()
         kernel = self.classifier.kernel
         if kernel.shape[0] != self.base_model.output_shape[-1]:
@@ -85,10 +81,15 @@ class InferenceEngine:
             try:
                 original, x = self._preprocess(raw)
 
-                # One real forward pass through the trained checkpoint. The
-                # feature maps and probabilities come from the same prediction.
+                # Real prediction from the complete trained checkpoint.
                 with tf.device("/CPU:0"):
-                    feature_maps, predictions = self.feature_model(x, training=False)
+                    predictions = self.model(x, training=False)
+
+                    # Reproduce the trained MobileNetV2 preprocessing and run
+                    # the SAME nested backbone directly to obtain its real
+                    # feature maps without rebuilding the Keras graph.
+                    mobile_x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
+                    feature_maps = self.base_model(mobile_x, training=False)
 
                 class_index = tf.argmax(predictions[0], axis=-1)
                 idx = int(class_index.numpy())

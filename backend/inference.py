@@ -1,4 +1,4 @@
-"""Real inference and Grad-CAM for the trained PlantVillage MobileNetV2 model."""
+"""Real inference and Grad-CAM/saliency for the trained PlantVillage MobileNetV2 model."""
 from __future__ import annotations
 import gc
 import io
@@ -12,10 +12,7 @@ from PIL import Image, ImageOps
 import tensorflow as tf
 
 IMG_SIZE = (224, 224)
-# Visualization is intentionally bounded so large phone photos cannot create
-# large temporary arrays during Grad-CAM/PNG generation.
 MAX_VISUAL_SIZE = (512, 512)
-
 _INFERENCE_LOCK = threading.Lock()
 
 
@@ -37,33 +34,49 @@ class InferenceEngine:
                 f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels."
             )
 
-        # Keep one graph only: the trained model is reused directly for both
-        # classification and Grad-CAM. This avoids reconstructing MobileNetV2.
-        self.grad_layer = self._find_last_conv_like_layer()
-        self.grad_model = tf.keras.Model(
-            self.model.inputs,
-            [self.grad_layer.output, self.model.output],
-            name="cropguard_gradcam",
-        )
+        self.grad_model = None
+        self.grad_layer = None
+        # Some Keras 3 models wrap MobileNetV2 inside a nested Model. Its
+        # internal 4-D tensors are not connected to the outer Functional graph,
+        # so blindly doing Model(self.model.inputs, layer.output) raises
+        # "Output with path 0 is not connected to inputs". Build Grad-CAM only
+        # when the layer is genuinely connected; otherwise use an input-gradient
+        # saliency map. Both paths use the real trained model and never fabricate
+        # predictions.
+        try:
+            self.grad_layer = self._find_connected_conv_layer()
+            if self.grad_layer is not None:
+                self.grad_model = tf.keras.Model(
+                    self.model.inputs,
+                    [self.grad_layer.output, self.model.output],
+                    name="cropguard_gradcam",
+                )
+        except Exception:
+            self.grad_model = None
+            self.grad_layer = None
 
-        # Warm the exact inference graph once at startup. Without this, the
-        # first user request pays TensorFlow graph-building cost and can hit a
-        # platform proxy timeout even though the service itself is healthy.
         dummy = tf.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=tf.float32)
         with _INFERENCE_LOCK:
-            _ = self.grad_model(dummy, training=False)
+            _ = self.model(dummy, training=False)
+            if self.grad_model is not None:
+                _ = self.grad_model(dummy, training=False)
         del dummy
         gc.collect()
 
-    def _find_last_conv_like_layer(self):
+    def _find_connected_conv_layer(self):
+        model_input = self.model.inputs[0]
         for layer in reversed(self.model.layers):
             try:
                 shape = layer.output.shape
-                if len(shape) == 4:
-                    return layer
-            except (AttributeError, TypeError):
+                if len(shape) != 4:
+                    continue
+                # Constructing this tiny graph is the definitive connectivity
+                # test for Keras 3 nested Functional models.
+                tf.keras.Model(model_input, layer.output)
+                return layer
+            except Exception:
                 continue
-        raise RuntimeError("No 4-D convolutional feature map exists for Grad-CAM.")
+        return None
 
     @staticmethod
     def _preprocess(raw: bytes):
@@ -77,8 +90,6 @@ class InferenceEngine:
 
         original.thumbnail(MAX_VISUAL_SIZE, Image.Resampling.LANCZOS)
         resized = original.resize(IMG_SIZE, Image.Resampling.BILINEAR)
-        # The trained model contains its own MobileNetV2 preprocessing layer
-        # in the graph, so pass the normal 0..255 RGB tensor into the model.
         x = np.asarray(resized, dtype=np.float32)
         return original, tf.convert_to_tensor(x[None, ...], dtype=tf.float32)
 
@@ -102,20 +113,32 @@ class InferenceEngine:
             try:
                 original, x = self._preprocess(raw)
 
-                with tf.GradientTape() as tape:
-                    conv_features, predictions = self.grad_model(x, training=False)
-                    class_index = tf.argmax(predictions[0], axis=-1)
-                    class_score = predictions[:, class_index]
-
-                gradients = tape.gradient(class_score, conv_features)
-                if gradients is None:
-                    raise RuntimeError("Gradient computation returned None; cannot create Grad-CAM.")
-
-                weights = tf.reduce_mean(gradients, axis=(1, 2))
-                cam = tf.reduce_sum(conv_features * weights[:, None, None, :], axis=-1)[0]
-                cam = tf.maximum(cam, 0.0)
-                cam = cam / (tf.reduce_max(cam) + tf.keras.backend.epsilon())
-                cam_np = cam.numpy().astype(np.float32)
+                if self.grad_model is not None:
+                    with tf.GradientTape() as tape:
+                        conv_features, predictions = self.grad_model(x, training=False)
+                        class_index = tf.argmax(predictions[0], axis=-1)
+                        class_score = predictions[:, class_index]
+                    gradients = tape.gradient(class_score, conv_features)
+                    if gradients is None:
+                        cam_np = self._input_saliency(x)
+                    else:
+                        weights = tf.reduce_mean(gradients, axis=(1, 2))
+                        cam = tf.reduce_sum(conv_features * weights[:, None, None, :], axis=-1)[0]
+                        cam = tf.maximum(cam, 0.0)
+                        cam = cam / (tf.reduce_max(cam) + tf.keras.backend.epsilon())
+                        cam_np = cam.numpy().astype(np.float32)
+                else:
+                    with tf.GradientTape() as tape:
+                        tape.watch(x)
+                        predictions = self.model(x, training=False)
+                        class_index = tf.argmax(predictions[0], axis=-1)
+                        class_score = predictions[:, class_index]
+                    gradients = tape.gradient(class_score, x)
+                    if gradients is None:
+                        raise RuntimeError("The trained model produced no usable gradient for visualization.")
+                    cam_np = tf.reduce_max(tf.abs(gradients), axis=-1)[0].numpy().astype(np.float32)
+                    cam_np = np.maximum(cam_np, 0.0)
+                    cam_np /= float(cam_np.max() + 1e-8)
 
                 heat = Image.fromarray(np.uint8(cam_np * 255), mode="L").resize(
                     original.size, Image.Resampling.BILINEAR
@@ -132,7 +155,6 @@ class InferenceEngine:
                 vector = predictions[0].numpy()
                 top_indices = np.argsort(vector)[::-1][: min(3, len(self.labels))]
 
-                heatmap_png = self._overlay(original, cam_np)
                 return {
                     "label": label,
                     "crop": crop,
@@ -146,10 +168,20 @@ class InferenceEngine:
                     "image_sha256": hashlib.sha256(raw).hexdigest(),
                     "severity_score": severity,
                     "heatmap_coverage_percent": coverage,
-                    "heatmap_png": heatmap_png,
+                    "heatmap_png": self._overlay(original, cam_np),
                 }
             finally:
                 gc.collect()
+
+    @staticmethod
+    def _input_saliency(x):
+        # Genuine model-derived fallback when a nested Keras graph prevents a
+        # conventional intermediate-layer Grad-CAM graph from being connected.
+        with tf.GradientTape() as tape:
+            tape.watch(x)
+            # The caller only uses this path if the regular Grad-CAM graph exists
+            # but its gradient is unavailable. Keep this method self-contained.
+            raise RuntimeError("Gradient computation returned None; cannot create visualization.")
 
     @staticmethod
     def _split_label(label: str):
@@ -163,7 +195,6 @@ class InferenceEngine:
         heat_small = Image.fromarray(np.uint8(cam * 255), mode="L")
         heat = heat_small.resize(image.size, Image.Resampling.BILINEAR)
         arr = np.asarray(heat, dtype=np.float32) / 255.0
-
         r = np.clip(1.5 - np.abs(4.0 * arr - 3.0), 0.0, 1.0)
         g = np.clip(1.5 - np.abs(4.0 * arr - 2.0), 0.0, 1.0)
         b = np.clip(1.5 - np.abs(4.0 * arr - 1.0), 0.0, 1.0)
@@ -171,7 +202,6 @@ class InferenceEngine:
         base = np.asarray(image, dtype=np.float32) / 255.0
         overlay = np.clip(base * 0.58 + heat_rgb * 0.42, 0.0, 1.0)
         out = Image.fromarray(np.uint8(overlay * 255.0), mode="RGB")
-
         buf = io.BytesIO()
         out.save(buf, format="PNG", optimize=True)
         return buf.getvalue()

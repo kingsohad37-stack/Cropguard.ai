@@ -21,7 +21,7 @@ with st.sidebar:
         if health.get("model_loaded"):
             st.success("Real trained model loaded")
         else:
-            st.warning("Model unavailable — train it before scanning.")
+            st.warning("Model unavailable — the Analyze button will still let you test the backend.")
             st.caption(health.get("model_error", "No model loaded."))
     except (requests.RequestException, ValueError) as exc:
         st.error("Backend unavailable")
@@ -38,8 +38,6 @@ upload = st.file_uploader(
 
 st.caption("Or use your camera")
 camera = st.camera_input("Take a leaf photo", key="leaf_camera")
-
-# Prefer an explicitly uploaded file. Fall back to the camera capture.
 source = upload if upload is not None else camera
 
 if source is not None:
@@ -55,47 +53,54 @@ if source is not None:
 else:
     image_bytes = None
 
-if source is not None and image_bytes is not None and st.button(
-    "🔬 Analyze with trained model",
-    type="primary",
-    disabled=not bool(health and health.get("model_loaded")),
-):
-    try:
-        with st.spinner("Running TensorFlow inference and Grad-CAM…"):
-            response = requests.post(
-                f"{api}/predict",
-                files={
-                    "file": (
-                        source.name or "camera.jpg",
-                        image_bytes,
-                        source.type or "image/jpeg",
-                    )
-                },
-                timeout=180,
-            )
-        if response.status_code == 503:
-            st.error("A real trained model is required before predictions can be made.")
+if source is not None and image_bytes is not None:
+    st.markdown("### Ready to analyze")
+    if st.button("🔬 Analyze with trained model", type="primary", key="analyze_leaf"):
+        if not api:
+            st.error("Backend URL is missing.")
         else:
-            response.raise_for_status()
-            data = response.json()
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Crop", data["crop"])
-            c2.metric("Diagnosis", data["disease"])
-            c3.metric("Model confidence", f"{data['confidence'] * 100:.2f}%")
-            st.metric("AI-derived severity estimate", f"{data['severity_score']:.2f}%")
-            st.caption(f"Leaf area above activation threshold: {data['heatmap_coverage_percent']:.2f}% • Image SHA-256: {data['image_sha256']}")
-            st.image(data["heatmap_data_url"], caption="Grad-CAM derived from this uploaded image")
-            st.subheader("Other model predictions")
-            st.table([{"class": p["label"], "probability": f"{p['probability'] * 100:.2f}%"} for p in data["top_predictions"]])
-            advisory = data["advisory"]
-            st.subheader("Treatment advisory")
-            st.write(advisory["summary"])
-            for action in advisory["actions"]:
-                st.write(f"• {action}")
-            for source_link in advisory.get("sources", []):
-                st.caption(source_link)
-    except requests.RequestException as exc:
-        st.error(f"Backend/inference error: {exc}")
+            try:
+                with st.spinner("Running TensorFlow inference and Grad-CAM…"):
+                    response = requests.post(
+                        f"{api}/predict",
+                        files={
+                            "file": (
+                                source.name or "camera.jpg",
+                                image_bytes,
+                                source.type or "image/jpeg",
+                            )
+                        },
+                        timeout=180,
+                    )
+                if response.status_code == 503:
+                    st.error("The backend is reachable, but no real trained model is loaded yet.")
+                    try:
+                        details = response.json()
+                        if details.get("detail"):
+                            st.caption(str(details["detail"]))
+                    except ValueError:
+                        pass
+                else:
+                    response.raise_for_status()
+                    data = response.json()
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Crop", data["crop"])
+                    c2.metric("Diagnosis", data["disease"])
+                    c3.metric("Model confidence", f"{data['confidence'] * 100:.2f}%")
+                    st.metric("AI-derived severity estimate", f"{data['severity_score']:.2f}%")
+                    st.caption(f"Leaf area above activation threshold: {data['heatmap_coverage_percent']:.2f}% • Image SHA-256: {data['image_sha256']}")
+                    st.image(data["heatmap_data_url"], caption="Grad-CAM derived from this uploaded image")
+                    st.subheader("Other model predictions")
+                    st.table([{"class": p["label"], "probability": f"{p['probability'] * 100:.2f}%"} for p in data["top_predictions"]])
+                    advisory = data["advisory"]
+                    st.subheader("Treatment advisory")
+                    st.write(advisory["summary"])
+                    for action in advisory["actions"]:
+                        st.write(f"• {action}")
+                    for source_link in advisory.get("sources", []):
+                        st.caption(source_link)
+            except requests.RequestException as exc:
+                st.error(f"Backend/inference error: {exc}")
 
 st.divider()
 st.subheader("Model evidence")

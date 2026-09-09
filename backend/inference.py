@@ -12,10 +12,9 @@ from PIL import Image, ImageOps
 import tensorflow as tf
 
 IMG_SIZE = (224, 224)
-# Bound image-sized allocations used only for Grad-CAM visualization.
-# The uploaded bytes are still hashed unchanged and the model still receives
-# its exact 224x224 input.
-MAX_VISUAL_SIZE = (768, 768)
+# Visualization is intentionally bounded so large phone photos cannot create
+# large temporary arrays during Grad-CAM/PNG generation.
+MAX_VISUAL_SIZE = (512, 512)
 
 _INFERENCE_LOCK = threading.Lock()
 
@@ -38,15 +37,23 @@ class InferenceEngine:
                 f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels."
             )
 
-        # Build Grad-CAM directly from the trained model graph. The previous
-        # implementation reconstructed the tail of the network a second time,
-        # unnecessarily increasing memory usage on Render's small instance.
+        # Keep one graph only: the trained model is reused directly for both
+        # classification and Grad-CAM. This avoids reconstructing MobileNetV2.
         self.grad_layer = self._find_last_conv_like_layer()
         self.grad_model = tf.keras.Model(
             self.model.inputs,
             [self.grad_layer.output, self.model.output],
             name="cropguard_gradcam",
         )
+
+        # Warm the exact inference graph once at startup. Without this, the
+        # first user request pays TensorFlow graph-building cost and can hit a
+        # platform proxy timeout even though the service itself is healthy.
+        dummy = tf.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=tf.float32)
+        with _INFERENCE_LOCK:
+            _ = self.grad_model(dummy, training=False)
+        del dummy
+        gc.collect()
 
     def _find_last_conv_like_layer(self):
         for layer in reversed(self.model.layers):

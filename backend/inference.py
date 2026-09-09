@@ -12,10 +12,10 @@ from PIL import Image, ImageOps
 import tensorflow as tf
 
 IMG_SIZE = (224, 224)
-# Uploaded phone photos can be 10+ megapixels. Keeping the original image at
-# full resolution makes the Grad-CAM overlay allocate huge NumPy arrays on
-# Render's small instance. Prediction still uses the exact 224x224 model input.
-MAX_VISUAL_SIZE = (1280, 1280)
+# Bound image-sized allocations used only for Grad-CAM visualization.
+# The uploaded bytes are still hashed unchanged and the model still receives
+# its exact 224x224 input.
+MAX_VISUAL_SIZE = (768, 768)
 
 _INFERENCE_LOCK = threading.Lock()
 
@@ -37,18 +37,16 @@ class InferenceEngine:
             raise RuntimeError(
                 f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels."
             )
+
+        # Build Grad-CAM directly from the trained model graph. The previous
+        # implementation reconstructed the tail of the network a second time,
+        # unnecessarily increasing memory usage on Render's small instance.
         self.grad_layer = self._find_last_conv_like_layer()
-        input_tensor = tf.keras.Input(shape=(*IMG_SIZE, 3), name="gradcam_input")
-        features = self.grad_layer(input_tensor, training=False)
-        output = features
-        passed_backbone = False
-        for layer in self.model.layers:
-            if layer is self.grad_layer:
-                passed_backbone = True
-                continue
-            if passed_backbone:
-                output = layer(output, training=False)
-        self.grad_model = tf.keras.Model(input_tensor, [features, output], name="cropguard_gradcam")
+        self.grad_model = tf.keras.Model(
+            self.model.inputs,
+            [self.grad_layer.output, self.model.output],
+            name="cropguard_gradcam",
+        )
 
     def _find_last_conv_like_layer(self):
         for layer in reversed(self.model.layers):
@@ -70,12 +68,11 @@ class InferenceEngine:
         except Exception as exc:
             raise ValueError("Upload is not a valid decodable image.") from exc
 
-        # Bound every image-sized allocation used by leaf masking and Grad-CAM
-        # rendering while preserving the uploaded image itself for its hash.
         original.thumbnail(MAX_VISUAL_SIZE, Image.Resampling.LANCZOS)
         resized = original.resize(IMG_SIZE, Image.Resampling.BILINEAR)
+        # The trained model contains its own MobileNetV2 preprocessing layer
+        # in the graph, so pass the normal 0..255 RGB tensor into the model.
         x = np.asarray(resized, dtype=np.float32)
-        x = tf.keras.applications.mobilenet_v2.preprocess_input(x)
         return original, tf.convert_to_tensor(x[None, ...], dtype=tf.float32)
 
     @staticmethod

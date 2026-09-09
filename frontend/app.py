@@ -27,21 +27,52 @@ with st.sidebar:
         st.error("Backend unavailable")
         st.caption(str(exc))
 
-upload = st.file_uploader("Upload a real leaf image", type=["jpg", "jpeg", "png", "webp"])
-camera = st.camera_input("Or capture a leaf with your camera")
-source = camera or upload
-if source:
+st.subheader("📷 Upload a leaf image")
+st.caption("Drag and drop a JPG, JPEG, PNG, or WEBP image into the box below, or tap Browse files.")
+upload = st.file_uploader(
+    "Drop your leaf image here",
+    type=["jpg", "jpeg", "png", "webp"],
+    accept_multiple_files=False,
+    key="leaf_upload",
+)
+
+st.caption("Or use your camera")
+camera = st.camera_input("Take a leaf photo", key="leaf_camera")
+
+# Prefer an explicitly uploaded file. Fall back to the camera capture.
+source = upload if upload is not None else camera
+
+if source is not None:
     try:
+        image_bytes = source.getvalue()
         image = Image.open(source).convert("RGB")
-        st.image(image, caption="Actual input", width=500)
+        st.success(f"Image received: {source.name or 'camera photo'}")
+        st.image(image, caption="Your uploaded leaf image", width=500)
     except (UnidentifiedImageError, OSError):
         st.error("That file is not a valid image. Please choose a JPEG, PNG, WEBP, or camera image.")
         source = None
+        image_bytes = None
+else:
+    image_bytes = None
 
-if source and st.button("🔬 Analyze with trained model", type="primary", disabled=not bool(health and health.get("model_loaded"))):
+if source is not None and image_bytes is not None and st.button(
+    "🔬 Analyze with trained model",
+    type="primary",
+    disabled=not bool(health and health.get("model_loaded")),
+):
     try:
         with st.spinner("Running TensorFlow inference and Grad-CAM…"):
-            response = requests.post(f"{api}/predict", files={"file": (source.name or "camera.jpg", source.getvalue(), source.type or "image/jpeg")}, timeout=180)
+            response = requests.post(
+                f"{api}/predict",
+                files={
+                    "file": (
+                        source.name or "camera.jpg",
+                        image_bytes,
+                        source.type or "image/jpeg",
+                    )
+                },
+                timeout=180,
+            )
         if response.status_code == 503:
             st.error("A real trained model is required before predictions can be made.")
         else:

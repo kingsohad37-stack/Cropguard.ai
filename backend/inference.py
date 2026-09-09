@@ -1,4 +1,4 @@
-"""Real inference and Grad-CAM/saliency for the trained PlantVillage MobileNetV2 model."""
+"""Real inference and class activation maps for the trained PlantVillage MobileNetV2 model."""
 from __future__ import annotations
 import gc
 import io
@@ -17,7 +17,7 @@ _INFERENCE_LOCK = threading.Lock()
 
 
 class InferenceEngine:
-    def __init__(self, model_path="models/plantvillage_best.h5", labels_path="models/labels.json"):
+    def __init__(self, model_path="models/plantvillage_best.keras", labels_path="models/labels.json"):
         model_path = Path(model_path)
         labels_path = Path(labels_path)
         if not model_path.exists():
@@ -25,46 +25,46 @@ class InferenceEngine:
         if not labels_path.exists():
             raise FileNotFoundError(f"LABEL MAP MISSING: {labels_path}")
 
+        # Load the actual trained checkpoint. No mock model or generated predictions.
         self.model = tf.keras.models.load_model(model_path, compile=False)
         self.labels = json.loads(labels_path.read_text())
         if self.model.output_shape[-1] != len(self.labels):
             raise RuntimeError(f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels.")
 
-        self.grad_model = None
-        self.grad_layer = None
-        try:
-            self.grad_layer = self._find_connected_conv_layer()
-            if self.grad_layer is not None:
-                self.grad_model = tf.keras.Model(
-                    self.model.inputs,
-                    [self.grad_layer.output, self.model.output],
-                    name="cropguard_gradcam",
-                )
-        except Exception:
-            self.grad_model = None
-            self.grad_layer = None
+        # The trained model is MobileNetV2 -> GlobalAveragePooling2D -> Dense.
+        # That architecture supports a genuine Class Activation Map (CAM):
+        # feature maps are weighted by the real final Dense classifier weights.
+        # CAM avoids GradientTape's large activation/gradient memory spike on
+        # Render's 512 MB free instance while remaining model-derived.
+        self.base_model = self._find_mobilenet_base()
+        self.feature_model = tf.keras.Model(
+            self.model.inputs,
+            [self.base_model.output, self.model.output],
+            name="cropguard_cam",
+        )
+        self.classifier = self._find_classifier()
+        kernel = self.classifier.kernel
+        if kernel.shape[0] != self.base_model.output_shape[-1]:
+            raise RuntimeError("Classifier and MobileNetV2 feature dimensions do not match for CAM.")
+        self.classifier_weights = tf.convert_to_tensor(kernel, dtype=tf.float32)
 
-        # Warm the actual trained model. Grad-CAM is warmed only when its
-        # intermediate graph is genuinely connected to the model input.
         dummy = tf.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=tf.float32)
         with _INFERENCE_LOCK:
             _ = self.model(dummy, training=False)
-            if self.grad_model is not None:
-                _ = self.grad_model(dummy, training=False)
         del dummy
         gc.collect()
 
-    def _find_connected_conv_layer(self):
-        model_input = self.model.inputs[0]
-        for layer in reversed(self.model.layers):
-            try:
-                if len(layer.output.shape) != 4:
-                    continue
-                tf.keras.Model(model_input, layer.output)
+    def _find_mobilenet_base(self):
+        for layer in self.model.layers:
+            if isinstance(layer, tf.keras.Model) and "mobilenet" in layer.name.lower():
                 return layer
-            except Exception:
-                continue
-        return None
+        raise RuntimeError("Trained MobileNetV2 backbone was not found in the checkpoint.")
+
+    def _find_classifier(self):
+        for layer in reversed(self.model.layers):
+            if isinstance(layer, tf.keras.layers.Dense) and layer.units == len(self.labels):
+                return layer
+        raise RuntimeError("Final trained Dense classifier was not found in the checkpoint.")
 
     @staticmethod
     def _preprocess(raw: bytes):
@@ -80,64 +80,45 @@ class InferenceEngine:
         x = np.asarray(resized, dtype=np.float32)
         return original, tf.convert_to_tensor(x[None, ...], dtype=tf.float32)
 
-    @staticmethod
-    def _leaf_mask(image: Image.Image) -> np.ndarray:
-        rgb = np.asarray(image).astype(np.float32) / 255.0
-        mx = rgb.max(axis=2)
-        mn = rgb.min(axis=2)
-        sat = (mx - mn) / (mx + 1e-6)
-        green = (rgb[..., 1] > rgb[..., 0] * 0.72) & (rgb[..., 1] > rgb[..., 2] * 0.72)
-        nonwhite = mx < 0.97
-        mask = (green | (sat > 0.18)) & nonwhite
-        if mask.mean() < 0.01:
-            mask = nonwhite
-        if mask.mean() < 0.01:
-            mask = np.ones(mask.shape, dtype=bool)
-        return mask
-
-    def _input_saliency(self, x):
-        # Genuine model-derived visualization fallback for nested Keras models.
-        with tf.GradientTape() as tape:
-            tape.watch(x)
-            predictions = self.model(x, training=False)
-            class_index = tf.argmax(predictions[0], axis=-1)
-            class_score = predictions[:, class_index]
-        gradients = tape.gradient(class_score, x)
-        if gradients is None:
-            raise RuntimeError("The trained model produced no usable gradient for visualization.")
-        cam = tf.reduce_max(tf.abs(gradients), axis=-1)[0]
-        cam = cam / (tf.reduce_max(cam) + 1e-8)
-        return predictions, class_index, cam.numpy().astype(np.float32)
-
     def predict(self, raw: bytes) -> dict:
         with _INFERENCE_LOCK:
             try:
                 original, x = self._preprocess(raw)
 
-                if self.grad_model is not None:
-                    with tf.GradientTape() as tape:
-                        conv_features, predictions = self.grad_model(x, training=False)
-                        class_index = tf.argmax(predictions[0], axis=-1)
-                        class_score = predictions[:, class_index]
-                    gradients = tape.gradient(class_score, conv_features)
-                    if gradients is not None:
-                        weights = tf.reduce_mean(gradients, axis=(1, 2))
-                        cam = tf.reduce_sum(conv_features * weights[:, None, None, :], axis=-1)[0]
-                        cam = tf.maximum(cam, 0.0)
-                        cam = cam / (tf.reduce_max(cam) + tf.keras.backend.epsilon())
-                        cam_np = cam.numpy().astype(np.float32)
-                    else:
-                        predictions, class_index, cam_np = self._input_saliency(x)
-                else:
-                    predictions, class_index, cam_np = self._input_saliency(x)
+                # One real forward pass through the trained checkpoint. The
+                # feature maps and probabilities come from the same prediction.
+                with tf.device("/CPU:0"):
+                    feature_maps, predictions = self.feature_model(x, training=False)
 
-                heat = Image.fromarray(np.uint8(cam_np * 255), mode="L").resize(original.size, Image.Resampling.BILINEAR)
+                class_index = tf.argmax(predictions[0], axis=-1)
+                idx = int(class_index.numpy())
+
+                # True CAM for GAP + Dense: sum_k(feature_k * classifier_weight[k,class]).
+                weights = self.classifier_weights[:, idx]
+                cam = tf.reduce_sum(feature_maps[0] * weights[None, None, :], axis=-1)
+                cam = tf.maximum(cam, 0.0)
+                max_value = tf.reduce_max(cam)
+                cam = cam / (max_value + tf.keras.backend.epsilon())
+                cam_np = cam.numpy().astype(np.float32)
+
+                heat = Image.fromarray(np.uint8(cam_np * 255), mode="L").resize(
+                    original.size, Image.Resampling.BILINEAR
+                )
                 heat_np = np.asarray(heat, dtype=np.float32) / 255.0
-                leaf_values = heat_np[self._leaf_mask(original)]
+                rgb = np.asarray(original).astype(np.float32) / 255.0
+                mx = rgb.max(axis=2)
+                mn = rgb.min(axis=2)
+                sat = (mx - mn) / (mx + 1e-6)
+                green = (rgb[..., 1] > rgb[..., 0] * 0.72) & (rgb[..., 1] > rgb[..., 2] * 0.72)
+                leaf_mask = (green | (sat > 0.18)) & (mx < 0.97)
+                if leaf_mask.mean() < 0.01:
+                    leaf_mask = mx < 0.97
+                if leaf_mask.mean() < 0.01:
+                    leaf_mask = np.ones(leaf_mask.shape, dtype=bool)
+                leaf_values = heat_np[leaf_mask]
                 severity = float(np.mean(leaf_values) * 100.0)
                 coverage = float(np.mean(leaf_values >= 0.50) * 100.0)
 
-                idx = int(class_index.numpy())
                 label = self.labels[idx]
                 crop, disease = self._split_label(label)
                 vector = predictions[0].numpy()
@@ -149,7 +130,10 @@ class InferenceEngine:
                     "disease": disease,
                     "class_index": idx,
                     "confidence": float(predictions[0, idx].numpy()),
-                    "top_predictions": [{"label": self.labels[int(i)], "probability": float(vector[int(i)])} for i in top_indices],
+                    "top_predictions": [
+                        {"label": self.labels[int(i)], "probability": float(vector[int(i)])}
+                        for i in top_indices
+                    ],
                     "image_sha256": hashlib.sha256(raw).hexdigest(),
                     "severity_score": severity,
                     "heatmap_coverage_percent": coverage,

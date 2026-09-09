@@ -1,8 +1,10 @@
 """Real inference and Grad-CAM for the trained PlantVillage MobileNetV2 model."""
 from __future__ import annotations
+import gc
 import io
 import json
 import hashlib
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +12,10 @@ from PIL import Image
 import tensorflow as tf
 
 IMG_SIZE = (224, 224)
+
+# Render's free CPU instances are memory constrained. Serializing inference
+# prevents two simultaneous uploads from multiplying TensorFlow's peak RAM.
+_INFERENCE_LOCK = threading.Lock()
 
 
 class InferenceEngine:
@@ -30,11 +36,7 @@ class InferenceEngine:
                 f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels."
             )
         self.grad_layer = self._find_last_conv_like_layer()
-        # Keras 3 can deserialize a nested MobileNet backbone whose stored
-        # ``layer.output`` belongs to an old internal graph. Rebuild the
-        # inference-only tail around the same loaded layers instead of using
-        # that stale symbolic output. Inputs are already MobileNet-preprocessed
-        # by ``_preprocess``; augmentation is an identity during inference.
+        # Build a small inference-only Grad-CAM graph from the loaded layers.
         input_tensor = tf.keras.Input(shape=(*IMG_SIZE, 3), name="gradcam_input")
         features = self.grad_layer(input_tensor, training=False)
         output = features
@@ -48,8 +50,6 @@ class InferenceEngine:
         self.grad_model = tf.keras.Model(input_tensor, [features, output], name="cropguard_gradcam")
 
     def _find_last_conv_like_layer(self):
-        # Search nested model layers from the top level. The trained MobileNetV2
-        # backbone is the last 4-D feature-producing layer in this architecture.
         for layer in reversed(self.model.layers):
             try:
                 shape = layer.output.shape
@@ -74,12 +74,6 @@ class InferenceEngine:
 
     @staticmethod
     def _leaf_mask(image: Image.Image) -> np.ndarray:
-        """Estimate leaf pixels from the uploaded image itself.
-
-        This is intentionally an image-derived mask, not a stored mask or score.
-        It is conservative: green vegetation is preferred, while sufficiently
-        saturated non-background pixels are retained for yellow/brown lesions.
-        """
         rgb = np.asarray(image).astype(np.float32) / 255.0
         mx = rgb.max(axis=2)
         mn = rgb.min(axis=2)
@@ -87,65 +81,70 @@ class InferenceEngine:
         green = (rgb[..., 1] > rgb[..., 0] * 0.72) & (rgb[..., 1] > rgb[..., 2] * 0.72)
         nonwhite = mx < 0.97
         mask = (green | (sat > 0.18)) & nonwhite
-        # Reject tiny speckles while keeping the computation deterministic.
         if mask.mean() < 0.01:
-            # A neutral fallback means "foreground unavailable" rather than
-            # fabricating a disease-specific area. The severity remains derived
-            # entirely from the actual Grad-CAM values.
             mask = nonwhite
         if mask.mean() < 0.01:
             mask = np.ones(mask.shape, dtype=bool)
         return mask
 
     def predict(self, raw: bytes) -> dict:
-        original, x = self._preprocess(raw)
+        # Only one TensorFlow inference/Grad-CAM job at a time on the small
+        # Render instance. This is still genuine inference on the uploaded image.
+        with _INFERENCE_LOCK:
+            try:
+                original, x = self._preprocess(raw)
 
-        # The class and heatmap below are produced by this exact uploaded tensor.
-        with tf.GradientTape() as tape:
-            conv_features, predictions = self.grad_model(x, training=False)
-            class_index = tf.argmax(predictions[0], axis=-1)
-            class_score = predictions[:, class_index]
+                with tf.GradientTape() as tape:
+                    conv_features, predictions = self.grad_model(x, training=False)
+                    class_index = tf.argmax(predictions[0], axis=-1)
+                    class_score = predictions[:, class_index]
 
-        gradients = tape.gradient(class_score, conv_features)
-        if gradients is None:
-            raise RuntimeError("Gradient computation returned None; cannot create Grad-CAM.")
+                gradients = tape.gradient(class_score, conv_features)
+                if gradients is None:
+                    raise RuntimeError("Gradient computation returned None; cannot create Grad-CAM.")
 
-        weights = tf.reduce_mean(gradients, axis=(1, 2))
-        cam = tf.reduce_sum(conv_features * weights[:, None, None, :], axis=-1)[0]
-        cam = tf.maximum(cam, 0.0)
-        cam = cam / (tf.reduce_max(cam) + tf.keras.backend.epsilon())
-        cam_np = cam.numpy().astype(np.float32)
+                weights = tf.reduce_mean(gradients, axis=(1, 2))
+                cam = tf.reduce_sum(conv_features * weights[:, None, None, :], axis=-1)[0]
+                cam = tf.maximum(cam, 0.0)
+                cam = cam / (tf.reduce_max(cam) + tf.keras.backend.epsilon())
+                cam_np = cam.numpy().astype(np.float32)
 
-        heat = Image.fromarray(np.uint8(cam_np * 255)).resize(
-            original.size, Image.Resampling.BILINEAR
-        )
-        heat_np = np.asarray(heat, dtype=np.float32) / 255.0
-        leaf_mask = self._leaf_mask(original)
-        leaf_values = heat_np[leaf_mask]
-        severity = float(np.mean(leaf_values) * 100.0)
-        coverage = float(np.mean(leaf_values >= 0.50) * 100.0)
+                heat = Image.fromarray(np.uint8(cam_np * 255), mode="L").resize(
+                    original.size, Image.Resampling.BILINEAR
+                )
+                heat_np = np.asarray(heat, dtype=np.float32) / 255.0
+                leaf_mask = self._leaf_mask(original)
+                leaf_values = heat_np[leaf_mask]
+                severity = float(np.mean(leaf_values) * 100.0)
+                coverage = float(np.mean(leaf_values >= 0.50) * 100.0)
 
-        idx = int(class_index.numpy())
-        label = self.labels[idx]
-        crop, disease = self._split_label(label)
-        vector = predictions[0].numpy()
-        top_indices = np.argsort(vector)[::-1][: min(3, len(self.labels))]
+                idx = int(class_index.numpy())
+                label = self.labels[idx]
+                crop, disease = self._split_label(label)
+                vector = predictions[0].numpy()
+                top_indices = np.argsort(vector)[::-1][: min(3, len(self.labels))]
 
-        return {
-            "label": label,
-            "crop": crop,
-            "disease": disease,
-            "class_index": idx,
-            "confidence": float(predictions[0, idx].numpy()),
-            "top_predictions": [
-                {"label": self.labels[int(i)], "probability": float(vector[int(i)])}
-                for i in top_indices
-            ],
-            "image_sha256": hashlib.sha256(raw).hexdigest(),
-            "severity_score": severity,
-            "heatmap_coverage_percent": coverage,
-            "heatmap_png": self._overlay(original, cam_np),
-        }
+                heatmap_png = self._overlay(original, cam_np)
+                result = {
+                    "label": label,
+                    "crop": crop,
+                    "disease": disease,
+                    "class_index": idx,
+                    "confidence": float(predictions[0, idx].numpy()),
+                    "top_predictions": [
+                        {"label": self.labels[int(i)], "probability": float(vector[int(i)])}
+                        for i in top_indices
+                    ],
+                    "image_sha256": hashlib.sha256(raw).hexdigest(),
+                    "severity_score": severity,
+                    "heatmap_coverage_percent": coverage,
+                    "heatmap_png": heatmap_png,
+                }
+                return result
+            finally:
+                # Release temporary TensorFlow/PIL/Numpy objects promptly so
+                # repeated scans do not accumulate memory on Render.
+                gc.collect()
 
     @staticmethod
     def _split_label(label: str):
@@ -156,17 +155,21 @@ class InferenceEngine:
 
     @staticmethod
     def _overlay(image: Image.Image, cam: np.ndarray) -> bytes:
-        import matplotlib
-        matplotlib.use("Agg", force=True)
-        import matplotlib.pyplot as plt
-        import io
+        # Generate the Grad-CAM overlay with PIL instead of Matplotlib. This
+        # avoids importing Matplotlib's large rendering stack for every scan.
+        heat_small = Image.fromarray(np.uint8(cam * 255), mode="L")
+        heat = heat_small.resize(image.size, Image.Resampling.BILINEAR)
+        arr = np.asarray(heat, dtype=np.float32) / 255.0
 
-        fig = plt.figure(figsize=(7, 7), frameon=False)
-        ax = fig.add_axes([0, 0, 1, 1])
-        ax.imshow(image)
-        ax.imshow(cam, cmap="jet", alpha=0.42, vmin=0, vmax=1)
-        ax.axis("off")
+        # Lightweight jet-like RGB mapping, derived solely from Grad-CAM values.
+        r = np.clip(1.5 - np.abs(4.0 * arr - 3.0), 0.0, 1.0)
+        g = np.clip(1.5 - np.abs(4.0 * arr - 2.0), 0.0, 1.0)
+        b = np.clip(1.5 - np.abs(4.0 * arr - 1.0), 0.0, 1.0)
+        heat_rgb = np.stack([r, g, b], axis=-1)
+        base = np.asarray(image, dtype=np.float32) / 255.0
+        overlay = np.clip(base * 0.58 + heat_rgb * 0.42, 0.0, 1.0)
+        out = Image.fromarray(np.uint8(overlay * 255.0), mode="RGB")
+
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0)
-        plt.close(fig)
+        out.save(buf, format="PNG", optimize=True)
         return buf.getvalue()

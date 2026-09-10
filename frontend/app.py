@@ -1,8 +1,21 @@
 """Streamlit client for genuine CropGuard inference only."""
 import os
 import requests
+import streamlit.components.v1 as components
 import streamlit as st
 from PIL import Image, UnidentifiedImageError
+
+
+class _CameraCapture:
+    """Small file-like wrapper for a captured camera image."""
+    def __init__(self, data, name="camera.jpg", content_type="image/jpeg"):
+        self._data = data
+        self.name = name
+        self.type = content_type
+
+    def getvalue(self):
+        return self._data
+
 
 st.set_page_config(page_title="CropGuard AI", page_icon="🌿", layout="wide")
 
@@ -306,6 +319,38 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Explicitly stop browser camera tracks when the page/app is backgrounded.
+components.html(
+    """<script>
+    (() => {
+      const stopVideos = (root) => {
+        try {
+          root.querySelectorAll('video').forEach((video) => {
+            const stream = video.srcObject;
+            if (stream && typeof stream.getTracks === 'function') {
+              stream.getTracks().forEach((track) => track.stop());
+              video.srcObject = null;
+            }
+          });
+          root.querySelectorAll('iframe').forEach((frame) => {
+            try { stopVideos(frame.contentWindow.document); } catch (_) {}
+          });
+        } catch (_) {}
+      };
+      const stopCamera = () => {
+        try { stopVideos(window.parent.document); } catch (_) {}
+        stopVideos(document);
+      };
+      try { window.parent.document.addEventListener('visibilitychange', () => {
+        if (window.parent.document.visibilityState !== 'visible') stopCamera();
+      }); } catch (_) {}
+      window.addEventListener('pagehide', stopCamera);
+      window.addEventListener('beforeunload', stopCamera);
+    })();
+    </script>""",
+    height=0,
+)
+
 LANG = {
     "English": {"title":"🌿 CropGuard AI", "caption":"PlantVillage-trained MobileNetV2 • real inference • live CAM", "upload_title":"📷 Upload a leaf image", "upload_help":"Drag and drop a JPG, JPEG, PNG, or WEBP image into the box below, or tap Browse files.", "camera":"Or use your camera", "ready":"Ready to analyze", "analyze":"🔬 Analyze with trained model", "spinner":"Running TensorFlow inference and CAM…", "crop":"Crop", "diagnosis":"Diagnosis", "confidence":"Model confidence", "severity":"AI-derived severity estimate", "predictions":"Other model predictions", "advisory":"Treatment advisory", "history":"Actual scan history", "language":"🌐 Language"},
     "ಕನ್ನಡ": {"title":"🌿 CropGuard AI", "caption":"PlantVillage ತರಬೇತಿ ಪಡೆದ MobileNetV2 • ನೈಜ AI ವಿಶ್ಲೇಷಣೆ • CAM", "upload_title":"📷 ಎಲೆಯ ಚಿತ್ರವನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ", "upload_help":"JPG, JPEG, PNG ಅಥವಾ WEBP ಚಿತ್ರವನ್ನು ಇಲ್ಲಿ ಹಾಕಿ ಅಥವಾ Browse files ಒತ್ತಿರಿ.", "camera":"ಅಥವಾ ಕ್ಯಾಮೆರಾ ಬಳಸಿ", "ready":"ವಿಶ್ಲೇಷಣೆಗೆ ಸಿದ್ಧ", "analyze":"🔬 ತರಬೇತಿ ಪಡೆದ ಮಾದರಿಯಿಂದ ವಿಶ್ಲೇಷಿಸಿ", "spinner":"TensorFlow ಮತ್ತು CAM ಮೂಲಕ ವಿಶ್ಲೇಷಿಸಲಾಗುತ್ತಿದೆ…", "crop":"ಬೆಳೆ", "diagnosis":"ರೋಗನಿರ್ಣಯ", "confidence":"ಮಾದರಿ ವಿಶ್ವಾಸ", "severity":"AI ಅಂದಾಜಿನ ತೀವ್ರತೆ", "predictions":"ಇತರ ಮಾದರಿ ಮುನ್ಸೂಚನೆಗಳು", "advisory":"ಚಿಕಿತ್ಸಾ ಸಲಹೆ", "history":"ನಿಜವಾದ ಸ್ಕ್ಯಾನ್ ಇತಿಹಾಸ", "language":"🌐 ಭಾಷೆ"},
@@ -365,7 +410,32 @@ st.subheader(T["upload_title"])
 st.caption(T["upload_help"])
 upload = st.file_uploader("Drop your leaf image here", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=False, key="leaf_upload")
 st.caption(T["camera"])
-camera = st.camera_input("Take a leaf photo", key="leaf_camera")
+
+# Keep the camera widget mounted only while actively taking a photo.
+# After capture it is removed on the next rerun, which releases the browser camera.
+if "camera_capture_bytes" not in st.session_state:
+    st.session_state.camera_capture_bytes = None
+    st.session_state.camera_capture_name = "camera.jpg"
+    st.session_state.camera_capture_type = "image/jpeg"
+
+camera = None
+if st.session_state.camera_capture_bytes is None:
+    camera = st.camera_input("Take a leaf photo", key="leaf_camera")
+    if camera is not None:
+        st.session_state.camera_capture_bytes = camera.getvalue()
+        st.session_state.camera_capture_name = camera.name or "camera.jpg"
+        st.session_state.camera_capture_type = camera.type or "image/jpeg"
+        st.rerun()
+else:
+    camera = _CameraCapture(
+        st.session_state.camera_capture_bytes,
+        st.session_state.camera_capture_name,
+        st.session_state.camera_capture_type,
+    )
+    if st.button("↻ Retake photo", key="retake_camera"):
+        st.session_state.camera_capture_bytes = None
+        st.rerun()
+
 source = upload if upload is not None else camera
 
 if source is not None:

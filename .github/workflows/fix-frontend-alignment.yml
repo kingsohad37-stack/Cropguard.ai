@@ -1,0 +1,68 @@
+name: CropGuard mobile alignment repair
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-frontend-alignment.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Repair mobile alignment and remove visible code styling
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          path = Path('frontend/app.py')
+          text = path.read_text(encoding='utf-8')
+          extra = r'''
+          /* Final mobile alignment pass: keep Streamlit content stable and readable. */
+          .main .block-container, .main .block-container * { box-sizing: border-box !important; }
+          .main .block-container { text-align: left !important; overflow-x: hidden !important; }
+          .main .block-container h1, .main .block-container h2, .main .block-container h3,
+          .main .block-container h4, .main .block-container p,
+          .main .block-container [data-testid="stCaptionContainer"],
+          .main .block-container label { text-align: left !important; }
+          .main .block-container [data-testid="stMarkdownContainer"] { overflow-wrap: anywhere !important; word-break: normal !important; }
+          .main .block-container [data-testid="stVerticalBlock"] { min-width: 0 !important; }
+          .main .block-container [data-testid="stHorizontalBlock"] { align-items: stretch !important; gap: 1rem !important; }
+          .main .block-container [data-testid="column"] { min-width: 0 !important; }
+          .main .block-container [data-testid="stImage"] { width: 100% !important; }
+          .main .block-container [data-testid="stImage"] img { max-height: 62vh !important; }
+          /* Do not expose raw code/preformatted output in the visual UI. */
+          .main .block-container pre, .main .block-container code { font-family: inherit !important; }
+          @media (max-width: 700px) {
+            .main .block-container { width: 100% !important; max-width: 100% !important; padding-left: .85rem !important; padding-right: .85rem !important; }
+            .main .block-container [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: .7rem !important; }
+            .main .block-container [data-testid="column"] { flex: 1 1 100% !important; width: 100% !important; max-width: 100% !important; }
+            .main .block-container h1 { font-size: clamp(2rem, 10vw, 2.7rem) !important; line-height: 1.04 !important; }
+            .main .block-container h2 { font-size: 1.55rem !important; }
+            .main .block-container h3 { font-size: 1.2rem !important; }
+            .main .block-container p, .main .block-container label { line-height: 1.5 !important; }
+            .main .block-container [data-testid="stFileUploaderDropzone"] { min-height: 150px !important; }
+            .main .block-container [data-testid="stCameraInput"] { width: 100% !important; overflow: hidden !important; }
+            .main .block-container [data-testid="stDataFrame"] { width: 100% !important; max-width: 100% !important; overflow: auto !important; }
+          }
+          '''
+          marker = '</style>'
+          if extra.strip() not in text:
+              idx = text.find(marker)
+              if idx < 0:
+                  raise SystemExit('CSS closing tag not found')
+              text = text[:idx] + extra + '\n' + text[idx:]
+          path.write_text(text, encoding='utf-8')
+      - name: Validate
+        run: python -m py_compile frontend/app.py
+      - name: Commit and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/app.py .github/workflows/fix-frontend-alignment.yml
+          git commit -m "Fix CropGuard mobile text alignment" || exit 0
+          git push

@@ -23,296 +23,167 @@ st.set_page_config(page_title="CropGuard AI", page_icon="🌿", layout="wide")
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-
     :root {
         --cg-ink: #183021;
-        --cg-muted: #5e7065;
-        --cg-green: #2f6f44;
-        --cg-glass: rgba(255,255,255,.58);
-        --cg-glass-strong: rgba(255,255,255,.72);
-        --cg-border: rgba(255,255,255,.58);
-        --cg-shadow: 0 18px 60px rgba(37, 67, 47, .13);
-        --cg-shadow-hover: 0 24px 70px rgba(37, 67, 47, .19);
-        --cg-radius: 22px;
-        --cg-ease: cubic-bezier(.4,0,.2,1);
+        --cg-muted: #5d6d63;
+        --cg-green: #2f7046;
+        --cg-green-dark: #215c37;
+        --cg-surface: rgba(255,255,255,.80);
+        --cg-border: rgba(255,255,255,.78);
+        --cg-shadow: 0 12px 40px rgba(27,63,39,.10);
+        --cg-radius: 20px;
     }
 
-    html, body, [class*="css"] {
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif;
+    html, body {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif !important;
     }
 
-    body {
-        background: #eef3ee !important;
-    }
+    body { background: #edf3ee !important; }
 
-    body::before {
-        content: "";
-        position: fixed;
-        inset: 0;
-        z-index: -2;
-        background-image:
-            linear-gradient(135deg, rgba(242,248,239,.74), rgba(238,246,243,.54)),
-            url('/app/static/cropguard-bg.jpg');
-        background-size: cover;
-        background-position: center;
-        filter: saturate(.92);
-        transform: scale(1.035);
-    }
-
-    body::after {
-        content: "";
-        position: fixed;
-        inset: 0;
-        z-index: -1;
-        pointer-events: none;
+    [data-testid="stAppViewContainer"] {
         background:
-            radial-gradient(circle at 15% 10%, rgba(255,255,255,.78), transparent 30%),
-            radial-gradient(circle at 90% 75%, rgba(180,225,187,.28), transparent 34%),
-            rgba(247,250,247,.22);
+            radial-gradient(circle at 8% 0%, rgba(255,255,255,.95), transparent 34%),
+            radial-gradient(circle at 92% 82%, rgba(196,228,202,.42), transparent 32%),
+            linear-gradient(145deg, #f5f9f5 0%, #eaf2ec 100%) !important;
     }
 
-    [data-testid="stAppViewContainer"],
-    [data-testid="stHeader"] {
-        background: transparent !important;
-    }
+    [data-testid="stHeader"] { background: transparent !important; }
 
-    [data-testid="stAppViewContainer"] > .main {
-        background: transparent !important;
-    }
-
-    .block-container {
+    .main .block-container {
+        width: min(100%, 1180px);
         max-width: 1180px;
-        padding: 3.5rem 2rem 4rem;
+        padding: 2.5rem 2rem 4rem;
     }
 
     h1, h2, h3 {
         color: var(--cg-ink) !important;
-        letter-spacing: -.045em !important;
         font-weight: 800 !important;
+        letter-spacing: -.035em !important;
     }
 
     h1 {
-        font-size: clamp(2.5rem, 5vw, 4.7rem) !important;
-        line-height: .98 !important;
-        margin-bottom: .45rem !important;
+        font-size: clamp(2.4rem, 6vw, 4.4rem) !important;
+        line-height: 1.02 !important;
+        margin: 0 0 .5rem !important;
     }
 
-    h2, h3 {
-        line-height: 1.08 !important;
-    }
+    h2, h3 { line-height: 1.15 !important; }
+    p, label, [data-testid="stCaptionContainer"] { color: var(--cg-muted); }
 
-    p, label, .stCaption, [data-testid="stMarkdownContainer"] {
-        color: var(--cg-muted);
-    }
-
-    /* Glass navigation/sidebar */
     [data-testid="stSidebar"] > div:first-child {
-        background: rgba(236,245,237,.54) !important;
-        backdrop-filter: blur(24px) saturate(140%);
-        -webkit-backdrop-filter: blur(24px) saturate(140%);
-        border-right: 1px solid rgba(255,255,255,.62);
-        box-shadow: 10px 0 40px rgba(38,67,48,.08);
-    }
-
-    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
-        gap: .65rem;
-    }
-
-    /* Soft glass cards for the app's existing Streamlit sections */
-    [data-testid="stVerticalBlockBorderWrapper"],
-    [data-testid="stMetric"],
-    [data-testid="stAlert"],
-    [data-testid="stFileUploader"],
-    [data-testid="stCameraInput"],
-    [data-testid="stDataFrame"] {
-        border-radius: var(--cg-radius) !important;
+        background: rgba(245,249,245,.94) !important;
+        border-right: 1px solid rgba(48,92,61,.10) !important;
     }
 
     [data-testid="stVerticalBlockBorderWrapper"] {
-        background: var(--cg-glass) !important;
+        background: var(--cg-surface) !important;
         border: 1px solid var(--cg-border) !important;
+        border-radius: var(--cg-radius) !important;
         box-shadow: var(--cg-shadow) !important;
-        backdrop-filter: blur(20px) saturate(135%);
-        -webkit-backdrop-filter: blur(20px) saturate(135%);
     }
 
     [data-testid="stMetric"] {
-        background: rgba(255,255,255,.47) !important;
-        border: 1px solid rgba(255,255,255,.58) !important;
-        padding: 1.1rem 1.15rem !important;
-        box-shadow: 0 12px 38px rgba(38,67,48,.09) !important;
-        backdrop-filter: blur(18px);
-        -webkit-backdrop-filter: blur(18px);
-        transition: transform .22s var(--cg-ease), box-shadow .22s var(--cg-ease);
-    }
-
-    [data-testid="stMetric"]:hover {
-        transform: translateY(-3px);
-        box-shadow: var(--cg-shadow-hover) !important;
-    }
-
-    [data-testid="stMetricValue"] {
-        color: var(--cg-ink) !important;
-        font-weight: 800 !important;
-        letter-spacing: -.035em;
-    }
-
-    /* Inputs / uploader */
-    .stTextInput input,
-    .stSelectbox [data-baseweb="select"] > div,
-    [data-testid="stFileUploaderDropzone"],
-    [data-testid="stCameraInput"] > div {
-        background: rgba(255,255,255,.46) !important;
-        border: 1px solid rgba(255,255,255,.68) !important;
+        background: rgba(255,255,255,.74) !important;
+        border: 1px solid rgba(255,255,255,.84) !important;
         border-radius: 18px !important;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 8px 30px rgba(38,67,48,.07) !important;
-        backdrop-filter: blur(18px);
-        -webkit-backdrop-filter: blur(18px);
+        padding: 1rem 1.05rem !important;
+        box-shadow: 0 8px 28px rgba(27,63,39,.08) !important;
     }
 
-    [data-testid="stFileUploaderDropzone"] {
-        padding: 1.5rem !important;
-        transition: transform .22s var(--cg-ease), box-shadow .22s var(--cg-ease), background .22s var(--cg-ease);
+    [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
+        color: var(--cg-ink) !important;
     }
 
-    [data-testid="stFileUploaderDropzone"]:hover {
-        transform: translateY(-2px);
-        background: rgba(255,255,255,.62) !important;
-        box-shadow: var(--cg-shadow-hover) !important;
+    [data-testid="stFileUploaderDropzone"], [data-testid="stCameraInput"] {
+        background: rgba(255,255,255,.72) !important;
+        border: 1px solid rgba(255,255,255,.88) !important;
+        border-radius: 18px !important;
+        box-shadow: 0 8px 28px rgba(27,63,39,.07) !important;
     }
 
-    /* Glossy pill buttons */
-    .stButton > button,
-    .stDownloadButton > button {
-        position: relative;
-        overflow: hidden;
-        border: 1px solid rgba(255,255,255,.65) !important;
+    [data-testid="stFileUploaderDropzone"] { padding: 1rem !important; }
+
+    .stTextInput input, .stSelectbox [data-baseweb="select"] > div {
+        min-height: 2.9rem;
+        background: rgba(255,255,255,.84) !important;
+        border: 1px solid rgba(49,91,61,.13) !important;
+        border-radius: 14px !important;
+    }
+
+    .stButton > button, .stDownloadButton > button {
+        min-height: 2.9rem;
         border-radius: 999px !important;
-        min-height: 3rem;
-        padding: .65rem 1.25rem !important;
+        border: 1px solid rgba(255,255,255,.88) !important;
+        padding: .6rem 1.15rem !important;
         font-weight: 700 !important;
-        letter-spacing: -.01em;
         color: #173621 !important;
-        background: linear-gradient(135deg, rgba(255,255,255,.78), rgba(224,242,228,.48)) !important;
-        box-shadow: 0 10px 28px rgba(43,91,55,.14), inset 0 1px 0 rgba(255,255,255,.9) !important;
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        transition: all .2s ease !important;
+        background: rgba(255,255,255,.86) !important;
+        box-shadow: 0 7px 22px rgba(35,82,49,.10), inset 0 1px 0 rgba(255,255,255,.96) !important;
+        transition: box-shadow .2s ease, background .2s ease !important;
     }
 
-    .stButton > button::before,
-    .stDownloadButton > button::before {
-        content: "";
-        position: absolute;
-        top: -80%;
-        left: -25%;
-        width: 42%;
-        height: 230%;
-        transform: rotate(25deg);
-        background: linear-gradient(90deg, transparent, rgba(255,255,255,.52), transparent);
-        opacity: .65;
-        pointer-events: none;
-        transition: left .45s var(--cg-ease);
+    .stButton > button:hover, .stDownloadButton > button:hover {
+        background: rgba(255,255,255,.98) !important;
+        box-shadow: 0 10px 28px rgba(35,82,49,.15), inset 0 1px 0 rgba(255,255,255,1) !important;
     }
 
-    .stButton > button:hover,
-    .stDownloadButton > button:hover {
-        transform: scale(1.035) translateY(-1px);
-        box-shadow: 0 16px 38px rgba(43,91,55,.2), inset 0 1px 0 rgba(255,255,255,.95) !important;
-    }
+    .stButton > button:active, .stDownloadButton > button:active { transform: scale(.98); }
 
-    .stButton > button:hover::before,
-    .stDownloadButton > button:hover::before {
-        left: 110%;
-    }
-
-    .stButton > button:active,
-    .stDownloadButton > button:active {
-        transform: scale(.97);
-    }
-
-    /* Primary action gets a richer botanical glass treatment */
     .stButton > button[kind="primary"] {
-        color: white !important;
-        background: linear-gradient(135deg, rgba(53,121,72,.95), rgba(31,92,51,.84)) !important;
-        box-shadow: 0 14px 34px rgba(39,104,57,.28), inset 0 1px 0 rgba(255,255,255,.28) !important;
+        color: #fff !important;
+        background: linear-gradient(135deg, var(--cg-green), var(--cg-green-dark)) !important;
+        border-color: rgba(255,255,255,.28) !important;
+        box-shadow: 0 10px 28px rgba(38,105,58,.25) !important;
     }
 
     .stButton > button[kind="primary"]:hover {
-        box-shadow: 0 20px 44px rgba(39,104,57,.34), inset 0 1px 0 rgba(255,255,255,.34) !important;
+        background: linear-gradient(135deg, #347a4b, #28663d) !important;
     }
 
-    /* Uploaded image / CAM result */
     [data-testid="stImage"] img {
-        border-radius: 22px !important;
-        border: 1px solid rgba(255,255,255,.62);
-        box-shadow: 0 18px 55px rgba(38,67,48,.14);
-        transition: transform .3s var(--cg-ease), box-shadow .3s var(--cg-ease);
+        max-width: 100% !important;
+        height: auto !important;
+        border-radius: 18px !important;
+        border: 1px solid rgba(255,255,255,.78) !important;
+        box-shadow: 0 12px 38px rgba(27,63,39,.12) !important;
     }
 
-    [data-testid="stImage"] img:hover {
-        transform: translateY(-3px) scale(1.008);
-        box-shadow: 0 24px 70px rgba(38,67,48,.2);
+    [data-testid="stDataFrame"], [data-testid="stAlert"] {
+        border-radius: 18px !important;
+        border: 1px solid rgba(255,255,255,.78) !important;
+        box-shadow: 0 8px 28px rgba(27,63,39,.08) !important;
     }
 
-    /* Tables */
-    [data-testid="stDataFrame"] {
-        overflow: hidden;
-        border: 1px solid rgba(255,255,255,.62) !important;
-        box-shadow: var(--cg-shadow) !important;
-        background: rgba(255,255,255,.45) !important;
-        backdrop-filter: blur(18px);
-        -webkit-backdrop-filter: blur(18px);
-    }
-
-    /* Alerts */
-    [data-testid="stAlert"] {
-        border: 1px solid rgba(255,255,255,.62) !important;
-        box-shadow: 0 10px 32px rgba(38,67,48,.08) !important;
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-    }
-
-    /* Dividers become softer */
     hr {
         border: 0 !important;
-        border-top: 1px solid rgba(54,89,64,.12) !important;
-        margin: 2.5rem 0 !important;
+        border-top: 1px solid rgba(40,76,50,.12) !important;
+        margin: 2rem 0 !important;
     }
 
-    /* Startup language modal */
     [data-testid="stDialog"] > div {
-        background: rgba(245,250,246,.76) !important;
-        border: 1px solid rgba(255,255,255,.72) !important;
-        border-radius: 26px !important;
-        box-shadow: 0 28px 90px rgba(28,63,40,.22) !important;
-        backdrop-filter: blur(26px) saturate(140%);
-        -webkit-backdrop-filter: blur(26px) saturate(140%);
+        width: min(92vw, 520px) !important;
+        background: rgba(248,251,248,.97) !important;
+        border: 1px solid rgba(255,255,255,.95) !important;
+        border-radius: 24px !important;
+        box-shadow: 0 24px 70px rgba(24,55,34,.20) !important;
     }
 
-    [data-testid="stDialog"] h2 {
-        font-size: 1.7rem !important;
+    [data-testid="stDialog"] h2 { font-size: 1.65rem !important; }
+
+    @media (max-width: 900px) {
+        .main .block-container { padding: 1.75rem 1.15rem 3rem; }
     }
 
-    /* Gentle load-in motion */
-    .main .block-container > div {
-        animation: cgFadeUp .55s var(--cg-ease) both;
-    }
-
-    @keyframes cgFadeUp {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-        *, *::before, *::after { animation: none !important; transition: none !important; }
-    }
-
-    @media (max-width: 700px) {
-        .block-container { padding: 2rem 1rem 3rem; }
-        h1 { font-size: 2.7rem !important; }
-        [data-testid="stMetric"] { padding: .9rem !important; }
+    @media (max-width: 600px) {
+        .main .block-container { padding: 1.25rem .8rem 2.5rem; }
+        h1 { font-size: 2.55rem !important; }
+        h2 { font-size: 1.55rem !important; }
+        h3 { font-size: 1.25rem !important; }
+        [data-testid="stMetric"] { padding: .8rem !important; }
+        .stButton > button, .stDownloadButton > button {
+            min-height: 2.75rem;
+            padding: .55rem .9rem !important;
+        }
     }
     </style>
     """,

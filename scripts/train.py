@@ -65,6 +65,20 @@ def check_split_integrity(train_frame, val_frame, test_frame):
         raise RuntimeError(f"DATA LEAKAGE detected across splits: {bad}")
 
 
+def make_sparse_label_smoothed_loss(num_classes, smoothing):
+    """Keras-3-compatible sparse label smoothing without relying on a removed API argument."""
+    smoothing = float(smoothing)
+
+    def loss(y_true, y_pred):
+        y_true = tf.cast(tf.reshape(y_true, [-1]), tf.int32)
+        one_hot = tf.one_hot(y_true, depth=num_classes)
+        if smoothing > 0:
+            one_hot = one_hot * (1.0 - smoothing) + smoothing / float(num_classes)
+        return tf.keras.losses.categorical_crossentropy(one_hot, y_pred)
+
+    return loss
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     os.chdir(root)
@@ -92,8 +106,6 @@ def main():
     check_split_integrity(train_frame, val_frame, test_frame)
     weights = class_weights(train_frame, labels)
 
-    # Field-oriented augmentation: geometry + illumination/color variation.
-    # These layers run only during training; validation/test remain untouched.
     aug = keras.Sequential([
         layers.RandomFlip('horizontal'),
         layers.RandomRotation(0.10),
@@ -112,12 +124,10 @@ def main():
     x = layers.GlobalAveragePooling2D()(x)
     x = layers.BatchNormalization()(x)
     x = layers.Dropout(0.35)(x)
-    # Keep a direct classifier after GAP so the production CAM implementation
-    # can use the learned classifier weights without constructing a new graph.
     out = layers.Dense(n, activation='softmax', name='predictions')(x)
     model = keras.Model(inp, out)
 
-    loss = keras.losses.SparseCategoricalCrossentropy(label_smoothing=args.label_smoothing)
+    loss = make_sparse_label_smoothed_loss(n, args.label_smoothing)
     model.compile(
         optimizer=keras.optimizers.AdamW(learning_rate=args.lr, weight_decay=1e-4, clipnorm=1.0),
         loss=loss,
@@ -142,7 +152,6 @@ def main():
     base.trainable = True
     for layer in base.layers[:-50]:
         layer.trainable = False
-    # Keep BatchNorm statistics stable on the deployment-oriented dataset.
     for layer in base.layers:
         if isinstance(layer, layers.BatchNormalization):
             layer.trainable = False
@@ -160,7 +169,7 @@ def main():
         class_weight=weights,
     )
 
-    best = keras.models.load_model(ckpt)
+    best = keras.models.load_model(ckpt, custom_objects={'loss': loss})
     test_loss, test_acc = best.evaluate(test, verbose=1)
     metrics = {
         'test_loss': float(test_loss),

@@ -1,0 +1,75 @@
+name: CropGuard complete frontend redesign
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/redesign-frontend.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  redesign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replace visual layer only
+        env:
+          BG_B64: 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
+          PY
+        python - <<'PY'
+import os, re
+from pathlib import Path
+p=Path('frontend/app.py')
+s=p.read_text(encoding='utf-8')
+start=s.index('# Premium visual layer only')
+end=s.index('# Explicitly stop browser camera tracks', start)
+bg=os.environ['BG_B64']
+css=f'''# Premium visual layer only: visual/styling changes; inference, routes and data remain untouched.
+st.markdown(r"""
+<style>
+:root{{--ink:#173323;--muted:#5d6f63;--green:#2e7448;--glass:rgba(255,255,255,.58);--line:rgba(255,255,255,.68);--shadow:0 20px 60px rgba(20,58,36,.14)}}
+html,body,[class*="css"]{{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Inter",sans-serif!important}}
+[data-testid="stAppViewContainer"]{{position:relative;min-height:100vh;background:linear-gradient(180deg,rgba(246,250,247,.78),rgba(231,241,234,.88)),url("data:image/jpeg;base64,{bg}") center/cover fixed no-repeat!important}}
+[data-testid="stAppViewContainer"]:before{{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(circle at 15% 5%,rgba(255,255,255,.72),transparent 34%),linear-gradient(120deg,rgba(255,255,255,.28),rgba(220,239,225,.34));}}
+[data-testid="stHeader"]{{background:transparent!important}}
+.main .block-container{{position:relative;z-index:1;width:min(100%,1120px);max-width:1120px;padding:3rem 1.25rem 4rem!important}}
+h1,h2,h3{{color:var(--ink)!important;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Inter",sans-serif!important;font-weight:800!important;letter-spacing:-.045em!important}}
+h1{{font-size:clamp(2.7rem,6vw,5rem)!important;line-height:.98!important;margin:.15rem 0 .35rem!important}}h2{{font-size:clamp(1.7rem,3vw,2.25rem)!important}}h3{{font-size:1.25rem!important}}
+p,label,[data-testid="stCaptionContainer"]{{color:var(--muted)!important}}
+.cg-glass{{padding:1.35rem 1.5rem;border:1px solid var(--line);border-radius:26px;background:rgba(255,255,255,.34);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);box-shadow:var(--shadow)}}
+[data-testid="stSidebar"]>div:first-child{{background:rgba(246,250,247,.68)!important;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-right:1px solid var(--line)!important}}
+[data-testid="stFileUploaderDropzone"],[data-testid="stCameraInput"]{{background:rgba(255,255,255,.5)!important;border:1px solid var(--line)!important;border-radius:22px!important;box-shadow:0 14px 40px rgba(20,58,36,.1)!important;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}}
+[data-testid="stFileUploaderDropzone"]{{padding:1.2rem!important}}
+.stTextInput input,.stSelectbox [data-baseweb="select"]>div{{background:rgba(255,255,255,.64)!important;border:1px solid var(--line)!important;border-radius:16px!important;min-height:2.85rem}}
+.stButton>button,.stDownloadButton>button{{min-height:2.9rem;border-radius:999px!important;border:1px solid var(--line)!important;padding:.62rem 1.2rem!important;font-weight:750!important;color:#214d32!important;background:linear-gradient(135deg,rgba(255,255,255,.82),rgba(255,255,255,.46))!important;box-shadow:0 10px 30px rgba(25,67,41,.12),inset 0 1px 0 rgba(255,255,255,.96)!important;transition:all .2s ease!important}}
+.stButton>button:hover,.stDownloadButton>button:hover{{transform:scale(1.04);box-shadow:0 15px 38px rgba(25,67,41,.18),inset 0 1px 0 #fff!important}}
+.stButton>button:active,.stDownloadButton>button:active{{transform:scale(.97)}}
+.stButton>button[kind="primary"]{{color:#fff!important;background:linear-gradient(135deg,#3d8a59,#1f6039)!important;box-shadow:0 14px 38px rgba(30,100,54,.28),inset 0 1px 0 rgba(255,255,255,.28)!important}}
+[data-testid="stMetric"]{{background:rgba(255,255,255,.5)!important;border:1px solid var(--line)!important;border-radius:20px!important;padding:1rem!important;box-shadow:0 12px 36px rgba(25,65,42,.1)!important;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);animation:cgIn .5s cubic-bezier(.4,0,.2,1) both}}
+[data-testid="stMetricValue"],[data-testid="stMetricLabel"]{{color:var(--ink)!important}}
+[data-testid="stImage"] img{{max-width:100%!important;height:auto!important;border-radius:22px!important;border:1px solid var(--line)!important;box-shadow:0 18px 55px rgba(24,61,39,.16)!important}}
+[data-testid="stAlert"],[data-testid="stDataFrame"]{{border-radius:18px!important;border:1px solid var(--line)!important;box-shadow:0 10px 32px rgba(24,62,39,.08)!important}}
+[data-testid="stDialog"]>div{{width:min(92vw,520px)!important;border-radius:28px!important;background:rgba(247,251,248,.76)!important;border:1px solid rgba(255,255,255,.82)!important;backdrop-filter:blur(26px);-webkit-backdrop-filter:blur(26px);box-shadow:0 30px 90px rgba(20,55,34,.26)!important}}
+hr{{border:0!important;border-top:1px solid rgba(40,80,53,.14)!important;margin:2.3rem 0!important}}
+@keyframes cgIn{{from{{opacity:0;transform:translateY(10px)}}to{{opacity:1;transform:none}}}}
+@media(max-width:700px){{.main .block-container{{padding:1.35rem .75rem 2.8rem!important}}h1{{font-size:2.65rem!important}}h2{{font-size:1.6rem!important}}.cg-glass{{padding:1rem;border-radius:22px}}}}
+</style>
+""",unsafe_allow_html=True)
+
+'''
+p.write_text(s[:start]+css+s[end:],encoding='utf-8')
+PY
+        git diff --check
+        python -m py_compile frontend/app.py
+      - name: Commit and remove one-time workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/app.py .github/workflows/redesign-frontend.yml
+          git commit -m "Completely redesign CropGuard frontend with real background"
+          git push
+          git rm .github/workflows/redesign-frontend.yml
+          git commit -m "Remove one-time frontend redesign workflow"
+          git push

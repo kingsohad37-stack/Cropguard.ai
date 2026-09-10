@@ -34,7 +34,6 @@ html,body,.stApp{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","
 h1,h2,h3,h4{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Inter",sans-serif!important;color:var(--cg-ink)!important;font-weight:850!important;letter-spacing:-.045em!important;line-height:1.04!important}
 h1{font-size:clamp(2.8rem,7vw,4.8rem)!important;margin:.15rem 0 .5rem!important}h2{font-size:clamp(2rem,5vw,3rem)!important}h3{font-size:clamp(1.35rem,3vw,1.9rem)!important}
 p,li,[data-testid="stCaptionContainer"],label{color:var(--cg-muted)!important;font-size:1.06rem!important;font-weight:600!important;line-height:1.58!important}
-/* Large outer glass cards make every text section stable and readable. */
 [data-testid="stVerticalBlockBorderWrapper"]{width:100%!important;box-sizing:border-box!important;background:var(--cg-glass)!important;border:1px solid var(--cg-border)!important;border-radius:28px!important;box-shadow:var(--cg-shadow)!important;backdrop-filter:blur(24px) saturate(125%)!important;-webkit-backdrop-filter:blur(24px) saturate(125%)!important;overflow:hidden!important}
 [data-testid="stVerticalBlockBorderWrapper"]>div{min-width:0!important}
 [data-testid="stFileUploaderDropzone"],[data-testid="stCameraInput"]{background:rgba(255,255,255,.72)!important;border:2px dashed rgba(24,105,56,.22)!important;border-radius:22px!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.9)!important}
@@ -47,8 +46,9 @@ p,li,[data-testid="stCaptionContainer"],label{color:var(--cg-muted)!important;fo
 [data-testid="stMetric"]{background:rgba(255,255,255,.86)!important;border:1px solid rgba(255,255,255,.95)!important;border-radius:22px!important;padding:17px!important;box-shadow:0 12px 35px rgba(18,70,37,.11)!important}[data-testid="stMetricValue"],[data-testid="stMetricLabel"]{color:var(--cg-ink)!important}
 [data-testid="stImage"] img{display:block!important;width:100%!important;height:auto!important;max-width:100%!important;object-fit:contain!important;border-radius:22px!important;border:1px solid rgba(255,255,255,.9)!important;box-shadow:0 18px 48px rgba(18,70,37,.14)!important}
 [data-testid="stDataFrame"],[data-testid="stTable"]{width:100%!important;max-width:100%!important;border-radius:20px!important;overflow:hidden!important}
-/* Remove any accidental code/debug presentation below Scan History. */
-pre,code,[data-testid="stCodeBlock"],.stCodeBlock,[data-testid="stException"],[data-testid="stMarkdownContainer"] pre,[data-testid="stMarkdownContainer"] code{display:none!important}\n/* Hide Streamlit source/debug remnants without touching functional widgets. */\n[data-testid="stException"]{visibility:hidden!important;height:0!important;margin:0!important;padding:0!important;overflow:hidden!important}
+/* Hard-hide every code/debug presentation from the user-facing dashboard. */
+pre,code,.stCode,.stCodeBlock,[data-testid="stCodeBlock"],[data-testid="stMarkdownContainer"] pre,[data-testid="stMarkdownContainer"] code,[data-testid="stException"],.stException{display:none!important;visibility:hidden!important;height:0!important;max-height:0!important;margin:0!important;padding:0!important;overflow:hidden!important}
+[data-testid="stException"] *{display:none!important}
 footer{visibility:hidden!important}
 [data-testid="stAlert"]{border-radius:18px!important}
 hr{border:0!important;border-top:1px solid rgba(28,83,46,.14)!important}
@@ -60,7 +60,28 @@ hr{border:0!important;border-top:1px solid rgba(28,83,46,.14)!important}
  [data-testid="stVerticalBlockBorderWrapper"]{border-radius:22px!important;padding:18px!important}
  .stButton>button,.stDownloadButton>button{width:100%!important}
 }
-</style>\n<style>\n/* Final stable CropGuard visual pass */\nhtml,body,.stApp,.stMarkdown,p,li,label,[data-testid="stCaptionContainer"]{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Inter",sans-serif!important;}\n.main .block-container{width:min(100% - 32px,1080px)!important;max-width:1080px!important;margin:0 auto!important;}\n.main .block-container p,.main .block-container li{font-size:1.08rem!important;line-height:1.62!important;font-weight:600!important;color:#294637!important;}\n.main .block-container h1{font-size:clamp(2.7rem,7vw,4.4rem)!important;font-weight:850!important;line-height:1.02!important;}\n.main .block-container h2{font-size:clamp(2rem,5vw,3rem)!important;font-weight:850!important;line-height:1.08!important;}\n.main .block-container h3{font-size:clamp(1.35rem,3.5vw,1.9rem)!important;font-weight:800!important;}\n.main .block-container [data-testid="stVerticalBlockBorderWrapper"]{width:100%!important;box-sizing:border-box!important;padding:clamp(18px,3vw,30px)!important;}\n.main .block-container [data-testid="column"]{min-width:0!important;width:100%!important;flex:1 1 100%!important;}\n.main .block-container [data-testid="stHorizontalBlock"]{flex-wrap:wrap!important;gap:1rem!important;}\n[data-testid="stDataFrame"],[data-testid="stTable"]{width:100%!important;max-width:100%!important;overflow:hidden!important;}\n/* Debug/code-looking output is not part of the user-facing design. */\npre,[data-testid="stCodeBlock"],.stCodeBlock{display:none!important;}\n@media(max-width:700px){\n .main .block-container{width:calc(100% - 20px)!important;padding:1rem 0 3rem!important;}\n .main .block-container p,.main .block-container li{font-size:1.02rem!important;line-height:1.55!important;}\n .main .block-container h1{font-size:2.55rem!important;}\n .main .block-container h2{font-size:1.9rem!important;}\n .main .block-container h3{font-size:1.28rem!important;}\n .main .block-container [data-testid="stVerticalBlockBorderWrapper"]{padding:18px!important;border-radius:22px!important;}\n}\n</style>\n
+</style>
+<style>
+/* Final stable CropGuard visual pass */
+html,body,.stApp,.stMarkdown,p,li,label,[data-testid="stCaptionContainer"]{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Inter",sans-serif!important;}
+.main .block-container{width:min(100% - 32px,1080px)!important;max-width:1080px!important;margin:0 auto!important;}
+.main .block-container p,.main .block-container li{font-size:1.08rem!important;line-height:1.62!important;font-weight:600!important;color:#294637!important;}
+.main .block-container h1{font-size:clamp(2.7rem,7vw,4.4rem)!important;font-weight:850!important;line-height:1.02!important;}
+.main .block-container h2{font-size:clamp(2rem,5vw,3rem)!important;font-weight:850!important;line-height:1.08!important;}
+.main .block-container h3{font-size:clamp(1.35rem,3.5vw,1.9rem)!important;font-weight:800!important;}
+.main .block-container [data-testid="stVerticalBlockBorderWrapper"]{width:100%!important;box-sizing:border-box!important;padding:clamp(18px,3vw,30px)!important;}
+.main .block-container [data-testid="column"]{min-width:0!important;width:100%!important;flex:1 1 100%!important;}
+.main .block-container [data-testid="stHorizontalBlock"]{flex-wrap:wrap!important;gap:1rem!important;}
+[data-testid="stDataFrame"],[data-testid="stTable"]{width:100%!important;max-width:100%!important;overflow:hidden!important;}
+@media(max-width:700px){
+ .main .block-container{width:calc(100% - 20px)!important;padding:1rem 0 3rem!important;}
+ .main .block-container p,.main .block-container li{font-size:1.02rem!important;line-height:1.55!important;}
+ .main .block-container h1{font-size:2.55rem!important;}
+ .main .block-container h2{font-size:1.9rem!important;}
+ .main .block-container h3{font-size:1.28rem!important;}
+ .main .block-container [data-testid="stVerticalBlockBorderWrapper"]{padding:18px!important;border-radius:22px!important;}
+}
+</style>
 """,unsafe_allow_html=True)
 
 # Explicitly stop browser camera tracks when the page/app is backgrounded.
@@ -99,86 +120,56 @@ LANG = {
     "English": {"title":"🌿 CropGuard AI", "caption":"PlantVillage-trained MobileNetV2 • real inference • live CAM", "upload_title":"📷 Upload a leaf image", "upload_help":"Drag and drop a JPG, JPEG, PNG, or WEBP image into the box below, or tap Browse files.", "camera":"Or use your camera", "ready":"Ready to analyze", "analyze":"🔬 Analyze with trained model", "spinner":"Running TensorFlow inference and CAM…", "crop":"Crop", "diagnosis":"Diagnosis", "confidence":"Model confidence", "severity":"AI-derived severity estimate", "predictions":"Other model predictions", "advisory":"Treatment advisory", "history":"Actual scan history", "language":"🌐 Language"},
     "ಕನ್ನಡ": {"title":"🌿 CropGuard AI", "caption":"PlantVillage ತರಬೇತಿ ಪಡೆದ MobileNetV2 • ನೈಜ AI ವಿಶ್ಲೇಷಣೆ • CAM", "upload_title":"📷 ಎಲೆಯ ಚಿತ್ರವನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ", "upload_help":"JPG, JPEG, PNG ಅಥವಾ WEBP ಚಿತ್ರವನ್ನು ಇಲ್ಲಿ ಹಾಕಿ ಅಥವಾ Browse files ಒತ್ತಿರಿ.", "camera":"ಅಥವಾ ಕ್ಯಾಮೆರಾ ಬಳಸಿ", "ready":"ವಿಶ್ಲೇಷಣೆಗೆ ಸಿದ್ಧ", "analyze":"🔬 ತರಬೇತಿ ಪಡೆದ ಮಾದರಿಯಿಂದ ವಿಶ್ಲೇಷಿಸಿ", "spinner":"TensorFlow ಮತ್ತು CAM ಮೂಲಕ ವಿಶ್ಲೇಷಿಸಲಾಗುತ್ತಿದೆ…", "crop":"ಬೆಳೆ", "diagnosis":"ರೋಗನಿರ್ಣಯ", "confidence":"ಮಾದರಿ ವಿಶ್ವಾಸ", "severity":"AI ಅಂದಾಜಿನ ತೀವ್ರತೆ", "predictions":"ಇತರ ಮಾದರಿ ಮುನ್ಸೂಚನೆಗಳು", "advisory":"ಚಿಕಿತ್ಸಾ ಸಲಹೆ", "history":"ನಿಜವಾದ ಸ್ಕ್ಯಾನ್ ಇತಿಹಾಸ", "language":"🌐 ಭಾಷೆ"},
     "मराठी": {"title":"🌿 CropGuard AI", "caption":"PlantVillage प्रशिक्षित MobileNetV2 • वास्तविक AI विश्लेषण • CAM", "upload_title":"📷 पानाचा फोटो अपलोड करा", "upload_help":"JPG, JPEG, PNG किंवा WEBP फोटो येथे टाका किंवा Browse files दाबा.", "camera":"किंवा कॅमेरा वापरा", "ready":"विश्लेषणासाठी तयार", "analyze":"🔬 प्रशिक्षित मॉडेलने विश्लेषण करा", "spinner":"TensorFlow आणि CAM द्वारे विश्लेषण सुरू आहे…", "crop":"पीक", "diagnosis":"निदान", "confidence":"मॉडेलचा विश्वास", "severity":"AI अंदाजित तीव्रता", "predictions":"इतर मॉडेल अंदाज", "advisory":"उपचार सल्ला", "history":"वास्तविक स्कॅन इतिहास", "language":"🌐 भाषा"},
-    "తెలుగు": {"title":"🌿 CropGuard AI", "caption":"PlantVillage శిక్షణ పొందిన MobileNetV2 • నిజమైన AI విశ్లేషణ • CAM", "upload_title":"📷 ఆకు చిత్రాన్ని అప్‌లోడ్ చేయండి", "upload_help":"JPG, JPEG, PNG లేదా WEBP చిత్రాన్ని ఇక్కడ డ్రాగ్ చేయండి లేదా Browse files నొక్కండి.", "camera":"లేదా కెమెరాను ఉపయోగించండి", "ready":"విశ్లేషణకు సిద్ధంగా ఉంది", "analyze":"🔬 శిక్షణ పొందిన మోడల్‌తో విశ్లేషించండి", "spinner":"TensorFlow మరియు CAM ద్వారా విశ్లేషిస్తోంది…", "crop":"పంట", "diagnosis":"రోగ నిర్ధారణ", "confidence":"మోడల్ విశ్వాసం", "severity":"AI అంచనా తీవ్రత", "predictions":"ఇతర మోడల్ అంచనాలు", "advisory":"చికిత్స సలహా", "history":"నిజమైన స్కాన్ చరిత్ర", "language":"🌐 భాష"},
+    "తెలుగు": {"title":"🌿 CropGuard AI", "caption":"PlantVillage శిక్షణ పొందిన MobileNetV2 • నిజమైన AI విశ్లేషణ • CAM", "upload_title":"📷 ఆకుల చిత్రాన్ని అప్‌లోడ్ చేయండి", "upload_help":"JPG, JPEG, PNG లేదా WEBP చిత్రాన్ని ఇక్కడ ఉంచండి లేదా Browse files నొక్కండి.", "camera":"లేదా కెమెరాను ఉపయోగించండి", "ready":"విశ్లేషణకు సిద్ధంగా ఉంది", "analyze":"🔬 శిక్షణ పొందిన మోడల్‌తో విశ్లేషించండి", "spinner":"TensorFlow మరియు CAM ద్వారా విశ్లేషిస్తోంది…", "crop":"పంట", "diagnosis":"వ్యాధి నిర్ధారణ", "confidence":"మోడల్ విశ్వాసం", "severity":"AI అంచనా తీవ్రత", "predictions":"ఇతర మోడల్ అంచనాలు", "advisory":"చికిత్సా సలహా", "history":"నిజమైన స్కాన్ చరిత్ర", "language":"🌐 భాష"},
 }
 
-if "site_language" not in st.session_state:
-    st.session_state.site_language = "English"
-    st.session_state.show_language_popup = True
-else:
-    st.session_state.show_language_popup = False
+if "language" not in st.session_state:
+    st.session_state.language = "English"
 
-@st.dialog("🌐 Choose your language")
-def language_popup():
-    st.write("Select a language to use on CropGuard AI.")
-    selected = st.selectbox(
-        "Language",
-        ["English", "ಕನ್ನಡ", "मराठी", "తెలుగు"],
-        index=["English", "ಕನ್ನಡ", "मराठी", "తెలుగు"].index(st.session_state.site_language),
-        key="language_popup_select",
-    )
-    if st.button("Continue", type="primary", use_container_width=True):
-        st.session_state.site_language = selected
-        st.session_state.show_language_popup = False
-        st.rerun()
+if "show_language_dialog" not in st.session_state:
+    st.session_state.show_language_dialog = True
 
-if st.session_state.get("show_language_popup", False):
-    language_popup()
+if st.session_state.show_language_dialog:
+    @st.dialog("🌐 Choose your language")
+    def choose_language():
+        choice = st.selectbox("Language", list(LANG.keys()), index=list(LANG.keys()).index(st.session_state.language), key="startup_language")
+        if st.button("Continue", type="primary", use_container_width=True):
+            st.session_state.language = choice
+            st.session_state.show_language_dialog = False
+            st.rerun()
+    choose_language()
 
-language = st.session_state.site_language
-T = LANG[language]
-
-with st.sidebar:
-    configured_api = os.environ.get("CROPGUARD_API_URL", "http://localhost:8000").strip().rstrip("/")
-    if configured_api and not configured_api.startswith(("http://", "https://")):
-        configured_api = "https://" + configured_api
-    api = st.text_input("Backend URL", configured_api).strip().rstrip("/")
-    health = None
-    try:
-        health_response = requests.get(f"{api}/health", timeout=20)
-        health_response.raise_for_status()
-        health = health_response.json()
-        if health.get("model_loaded"):
-            st.success("Real trained model loaded")
-        else:
-            st.warning("Model unavailable")
-            st.caption(health.get("model_error", "No model loaded."))
-    except (requests.RequestException, ValueError) as exc:
-        st.error("Backend unavailable")
-        st.caption(str(exc))
-
+T = LANG[st.session_state.language]
 st.title(T["title"])
 st.caption(T["caption"])
 
-st.subheader(T["upload_title"])
-st.caption(T["upload_help"])
-upload = st.file_uploader("Drop your leaf image here", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=False, key="leaf_upload")
-st.caption(T["camera"])
+api = os.getenv("CROPGUARD_API_URL", "").rstrip("/")
 
-# Keep the camera widget mounted only while actively taking a photo.
-# After capture it is removed on the next rerun, which releases the browser camera.
+st.subheader(T["upload_title"])
+st.write(T["upload_help"])
+upload = st.file_uploader("", type=["jpg", "jpeg", "png", "webp"], label_visibility="collapsed")
+
 if "camera_capture_bytes" not in st.session_state:
     st.session_state.camera_capture_bytes = None
-    st.session_state.camera_capture_name = "camera.jpg"
-    st.session_state.camera_capture_type = "image/jpeg"
 
 camera = None
-if st.session_state.camera_capture_bytes is None:
-    camera = st.camera_input("Take a leaf photo", key="leaf_camera")
-    if camera is not None:
-        st.session_state.camera_capture_bytes = camera.getvalue()
-        st.session_state.camera_capture_name = camera.name or "camera.jpg"
-        st.session_state.camera_capture_type = camera.type or "image/jpeg"
+if st.button(T["camera"], key="open_camera"):
+    st.session_state.camera_active = True
+    st.rerun()
+
+if st.session_state.get("camera_active", False):
+    captured = st.camera_input("Take a picture", key="camera_widget")
+    if captured is not None:
+        st.session_state.camera_capture_bytes = captured.getvalue()
+        st.session_state.camera_active = False
         st.rerun()
-else:
-    camera = _CameraCapture(
-        st.session_state.camera_capture_bytes,
-        st.session_state.camera_capture_name,
-        st.session_state.camera_capture_type,
-    )
-    if st.button("↻ Retake photo", key="retake_camera"):
+    if st.button("Close camera", key="close_camera"):
+        st.session_state.camera_active = False
         st.session_state.camera_capture_bytes = None
         st.rerun()
+
+if st.session_state.camera_capture_bytes:
+    camera = _CameraCapture(st.session_state.camera_capture_bytes)
 
 source = upload if upload is not None else camera
 

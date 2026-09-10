@@ -55,35 +55,6 @@ p,[data-testid="stCaptionContainer"],label { color:var(--cg-muted)!important; }
 [data-testid="stAlert"],[data-testid="stDataFrame"] { border-radius:18px!important; }
 hr { border:0!important; border-top:1px solid rgba(35,79,47,.13)!important; }
 @media(max-width:700px){ [data-testid="stAppViewContainer"]{background-attachment:scroll!important;background-position:center top!important;} .main .block-container{padding:1.15rem .72rem 2.5rem!important;} h1{font-size:2.55rem!important;} h2{font-size:1.55rem!important;} h3{font-size:1.22rem!important;} [data-testid="stVerticalBlockBorderWrapper"]{border-radius:20px!important;} [data-testid="stDialog"]>div,[role="dialog"]{border-radius:22px!important;} }
-
-/* Final mobile alignment pass: keep Streamlit content stable and readable. */
-.main .block-container, .main .block-container * { box-sizing: border-box !important; }
-.main .block-container { text-align: left !important; overflow-x: hidden !important; }
-.main .block-container h1, .main .block-container h2, .main .block-container h3,
-.main .block-container h4, .main .block-container p,
-.main .block-container [data-testid="stCaptionContainer"],
-.main .block-container label { text-align: left !important; }
-.main .block-container [data-testid="stMarkdownContainer"] { overflow-wrap: anywhere !important; word-break: normal !important; }
-.main .block-container [data-testid="stVerticalBlock"] { min-width: 0 !important; }
-.main .block-container [data-testid="stHorizontalBlock"] { align-items: stretch !important; gap: 1rem !important; }
-.main .block-container [data-testid="column"] { min-width: 0 !important; }
-.main .block-container [data-testid="stImage"] { width: 100% !important; }
-.main .block-container [data-testid="stImage"] img { max-height: 62vh !important; }
-/* Do not expose raw code/preformatted output in the visual UI. */
-.main .block-container pre, .main .block-container code { font-family: inherit !important; }
-@media (max-width: 700px) {
-  .main .block-container { width: 100% !important; max-width: 100% !important; padding-left: .85rem !important; padding-right: .85rem !important; }
-  .main .block-container [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: .7rem !important; }
-  .main .block-container [data-testid="column"] { flex: 1 1 100% !important; width: 100% !important; max-width: 100% !important; }
-  .main .block-container h1 { font-size: clamp(2rem, 10vw, 2.7rem) !important; line-height: 1.04 !important; }
-  .main .block-container h2 { font-size: 1.55rem !important; }
-  .main .block-container h3 { font-size: 1.2rem !important; }
-  .main .block-container p, .main .block-container label { line-height: 1.5 !important; }
-  .main .block-container [data-testid="stFileUploaderDropzone"] { min-height: 150px !important; }
-  .main .block-container [data-testid="stCameraInput"] { width: 100% !important; overflow: hidden !important; }
-  .main .block-container [data-testid="stDataFrame"] { width: 100% !important; max-width: 100% !important; overflow: auto !important; }
-}
-
 </style>
 """,
     unsafe_allow_html=True,

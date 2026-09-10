@@ -1,0 +1,61 @@
+name: Fix CropGuard camera lifecycle
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-camera.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-camera:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch camera lifecycle
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('frontend/app.py')
+          text = path.read_text(encoding='utf-8')
+
+          if 'class _CameraCapture' not in text:
+              text = text.replace(
+                  'import os\nimport requests\n',
+                  'import os\nimport requests\nimport streamlit.components.v1 as components\n'
+              )
+
+          old_import = 'from PIL import Image, UnidentifiedImageError\n\n'
+          new_import = '''from PIL import Image, UnidentifiedImageError\n\n\nclass _CameraCapture:\n    """Small file-like wrapper for a captured camera image."""\n    def __init__(self, data, name="camera.jpg", content_type="image/jpeg"):\n        self._data = data\n        self.name = name\n        self.type = content_type\n\n    def getvalue(self):\n        return self._data\n\n\n'''
+          if 'class _CameraCapture' not in text:
+              text = text.replace(old_import, new_import, 1)
+
+          marker = 'LANG = {\n'
+          camera_js = '''# Explicitly stop browser camera tracks when the page/app is backgrounded.\ncomponents.html(\n    """<script>\n    (() => {\n      const stopVideos = (root) => {\n        try {\n          root.querySelectorAll('video').forEach((video) => {\n            const stream = video.srcObject;\n            if (stream && typeof stream.getTracks === 'function') {\n              stream.getTracks().forEach((track) => track.stop());\n              video.srcObject = null;\n            }\n          });\n          root.querySelectorAll('iframe').forEach((frame) => {\n            try { stopVideos(frame.contentWindow.document); } catch (_) {}\n          });\n        } catch (_) {}\n      };\n      const stopCamera = () => {\n        try { stopVideos(window.parent.document); } catch (_) {}\n        stopVideos(document);\n      };\n      try { window.parent.document.addEventListener('visibilitychange', () => {\n        if (window.parent.document.visibilityState !== 'visible') stopCamera();\n      }); } catch (_) {}\n      window.addEventListener('pagehide', stopCamera);\n      window.addEventListener('beforeunload', stopCamera);\n    })();\n    </script>""",\n    height=0,\n)\n\n'''
+          if 'Explicitly stop browser camera tracks' not in text:
+              text = text.replace(marker, camera_js + marker, 1)
+
+          old_camera = '''st.caption(T["camera"])\ncamera = st.camera_input("Take a leaf photo", key="leaf_camera")\nsource = upload if upload is not None else camera\n\nif source is not None:\n'''
+          new_camera = '''st.caption(T["camera"])\n\n# Keep the camera widget mounted only while actively taking a photo.\n# After capture it is removed on the next rerun, which releases the browser camera.\nif "camera_capture_bytes" not in st.session_state:\n    st.session_state.camera_capture_bytes = None\n    st.session_state.camera_capture_name = "camera.jpg"\n    st.session_state.camera_capture_type = "image/jpeg"\n\ncamera = None\nif st.session_state.camera_capture_bytes is None:\n    camera = st.camera_input("Take a leaf photo", key="leaf_camera")\n    if camera is not None:\n        st.session_state.camera_capture_bytes = camera.getvalue()\n        st.session_state.camera_capture_name = camera.name or "camera.jpg"\n        st.session_state.camera_capture_type = camera.type or "image/jpeg"\n        st.rerun()\nelse:\n    camera = _CameraCapture(\n        st.session_state.camera_capture_bytes,\n        st.session_state.camera_capture_name,\n        st.session_state.camera_capture_type,\n    )\n    if st.button("↻ Retake photo", key="retake_camera"):\n        st.session_state.camera_capture_bytes = None\n        st.rerun()\n\nsource = upload if upload is not None else camera\n\nif source is not None:\n'''
+          if old_camera not in text:
+              raise SystemExit('Expected camera block was not found; refusing to modify the app.')
+          text = text.replace(old_camera, new_camera, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Verify Python syntax
+        run: python -m py_compile frontend/app.py
+
+      - name: Commit camera fix and remove one-time workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -f .github/workflows/fix-camera.yml
+          git add frontend/app.py .github/workflows/fix-camera.yml
+          git commit -m 'Fix camera release lifecycle'
+          git push

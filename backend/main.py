@@ -43,7 +43,7 @@ def init_db():
     store.initialize()
 
 
-app = FastAPI(title="CropGuard AI", version="1.1.0")
+app = FastAPI(title="CropGuard AI", version="1.1.1")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -75,16 +75,10 @@ def metrics():
 
 @app.post("/predict")
 def predict(file: UploadFile = File(...)):
-    """Synchronous on purpose: FastAPI runs sync endpoints in its worker pool.
-
-    TensorFlow CPU inference is blocking. Keeping this endpoint synchronous
-    prevents inference from blocking the ASGI event loop and Render health
-    checks, which can otherwise turn a healthy process into a 502 during a
-    long first/real inference request.
-    """
+    """Run genuine TensorFlow inference without making scan persistence a hard dependency."""
     started = time.perf_counter()
     if engine is None:
-        raise HTTPException(503, "Real trained model is not loaded. Train the PlantVillage model first.")
+        raise HTTPException(503, "Real trained model is not loaded. Check /health for the model error.")
 
     raw = file.file.read()
     if not raw:
@@ -100,25 +94,32 @@ def predict(file: UploadFile = File(...)):
         raise HTTPException(422, f"Inference failed: {exc}") from exc
 
     result["advisory"] = advisory_for(result["label"])
-    init_db()
+
+    # Prediction is valid even if optional scan persistence is temporarily unavailable.
+    # A Supabase 401/5xx must never be misreported to the user as a model failure.
     try:
+        init_db()
         result["scan_id"] = store.insert({**result, "ts": time.time(), "filename": file.filename or "upload"})
+        result["storage_status"] = "saved"
     except Exception as exc:
-        logger.exception("Scan storage failed")
-        raise HTTPException(503, f"Scan storage failed: {exc}") from exc
+        logger.exception("Optional scan storage failed; returning valid inference result")
+        result["scan_id"] = None
+        result["storage_status"] = "unavailable"
+        result["storage_error"] = str(exc)
 
     result["heatmap_data_url"] = "data:image/png;base64," + base64.b64encode(result.pop("heatmap_png")).decode()
     logger.info(
-        "Prediction complete: label=%s confidence=%.4f elapsed=%.2fs",
-        result["label"], result["confidence"], time.perf_counter() - started,
+        "Prediction complete: label=%s confidence=%.4f elapsed=%.2fs storage=%s",
+        result["label"], result["confidence"], time.perf_counter() - started, result["storage_status"],
     )
     return result
 
 
 @app.get("/history")
 def history():
-    init_db()
     try:
+        init_db()
         return store.history()
     except Exception as exc:
-        raise HTTPException(503, f"Scan storage failed: {exc}") from exc
+        logger.exception("Scan history unavailable")
+        raise HTTPException(503, f"Scan history is unavailable: {exc}") from exc

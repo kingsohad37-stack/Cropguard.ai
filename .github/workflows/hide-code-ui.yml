@@ -1,0 +1,36 @@
+name: Hide residual code output
+on:
+  push:
+    paths:
+      - .github/workflows/hide-code-ui.yml
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch UI-only CSS
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('frontend/app.py')
+          s = p.read_text()
+          old = 'pre,[data-testid="stCodeBlock"],.stCodeBlock,[data-testid="stException"]{display:none!important}'
+          new = 'pre,code,[data-testid="stCodeBlock"],.stCodeBlock,[data-testid="stException"],[data-testid="stMarkdownContainer"] pre,[data-testid="stMarkdownContainer"] code{display:none!important}\\n/* Hide Streamlit source/debug remnants without touching functional widgets. */\\n[data-testid="stException"]{visibility:hidden!important;height:0!important;margin:0!important;padding:0!important;overflow:hidden!important}'
+          if old not in s:
+              raise SystemExit('Expected CSS selector not found; refusing unsafe edit')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          python -m py_compile frontend/app.py
+          rm -f .github/workflows/hide-code-ui.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/app.py .github/workflows/hide-code-ui.yml
+          git commit -m 'Hide residual code and debug output' || exit 0
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main

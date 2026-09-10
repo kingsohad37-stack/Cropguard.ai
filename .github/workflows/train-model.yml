@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: cropguard-model-training
+  cancel-in-progress: false
+
 jobs:
   train:
     runs-on: ubuntu-latest
@@ -18,6 +22,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install system dependencies
         run: |
@@ -41,16 +47,33 @@ jobs:
       - name: Download the real PlantVillage dataset
         run: |
           mkdir -p /tmp/plantvillage
-          curl -L --fail --retry 3 -o /tmp/plantvillage/data.zip https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/data.zip
-          curl -L --fail --retry 3 -o /tmp/plantvillage/train.txt https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/splits/color_train.txt
-          curl -L --fail --retry 3 -o /tmp/plantvillage/test.txt https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/splits/color_test.txt
+          curl -L --fail --retry 5 --retry-delay 5 -o /tmp/plantvillage/data.zip https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/data.zip
+          curl -L --fail --retry 5 --retry-delay 5 -o /tmp/plantvillage/train.txt https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/splits/color_train.txt
+          curl -L --fail --retry 5 --retry-delay 5 -o /tmp/plantvillage/test.txt https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/splits/color_test.txt
           unzip -q /tmp/plantvillage/data.zip -d /tmp/plantvillage/images
 
       - name: Build leakage-safe CSV splits
         run: python scripts/prepare_plantvillage.py --root /tmp/plantvillage/images --train-list /tmp/plantvillage/train.txt --test-list /tmp/plantvillage/test.txt
 
       - name: Train advanced model
-        run: python scripts/train.py --epochs 12 --fine-tune-epochs 8 --batch-size 32
+        env:
+          TF_CPP_MIN_LOG_LEVEL: '1'
+          TF_NUM_INTRAOP_THREADS: '2'
+          TF_NUM_INTEROP_THREADS: '2'
+        run: python scripts/train.py --epochs 12 --fine-tune-epochs 8 --batch-size 16
+
+      - name: Verify trained artifacts before evaluation
+        run: |
+          test -s models/plantvillage_best.keras
+          test -s models/training_log.csv
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('models/metrics.json')
+          if not p.exists(): raise SystemExit('metrics.json missing')
+          m=json.loads(p.read_text())
+          print('Training artifact verified:', m)
+          PY
 
       - name: Evaluate model
         run: python scripts/evaluate.py
@@ -66,19 +89,52 @@ jobs:
         with:
           name: cropguard-training-results
           path: |
+            models/plantvillage_best.keras
             models/metrics.json
             models/training_log.csv
             models/evaluation.json
             models/per_class_metrics.csv
             models/confusion_matrix.npy
             models/confusion_matrix.png
-          if-no-files-found: warn
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Commit trained model and metrics
+      - name: Commit trained model and metrics safely
         if: success()
+        shell: bash
         run: |
+          set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add models/plantvillage_best.keras models/metrics.json models/training_log.csv models/evaluation.json models/per_class_metrics.csv models/confusion_matrix.npy models/confusion_matrix.png data/splits
-          git diff --cached --quiet || git commit -m 'Train and evaluate advanced CropGuard model'
-          git push
+
+          mkdir -p /tmp/cropguard-trained
+          cp models/plantvillage_best.keras /tmp/cropguard-trained/
+          cp models/metrics.json models/training_log.csv models/evaluation.json /tmp/cropguard-trained/
+          cp models/per_class_metrics.csv models/confusion_matrix.npy models/confusion_matrix.png /tmp/cropguard-trained/
+          cp -r data/splits /tmp/cropguard-trained/splits
+
+          for attempt in 1 2 3 4 5; do
+            echo "Publishing trained artifacts, attempt $attempt/5"
+            git fetch origin main
+            git reset --hard origin/main
+
+            cp /tmp/cropguard-trained/plantvillage_best.keras models/plantvillage_best.keras
+            cp /tmp/cropguard-trained/metrics.json /tmp/cropguard-trained/training_log.csv /tmp/cropguard-trained/evaluation.json models/
+            cp /tmp/cropguard-trained/per_class_metrics.csv /tmp/cropguard-trained/confusion_matrix.npy /tmp/cropguard-trained/confusion_matrix.png models/
+            rm -rf data/splits
+            cp -r /tmp/cropguard-trained/splits data/splits
+
+            git add models/plantvillage_best.keras models/metrics.json models/training_log.csv models/evaluation.json models/per_class_metrics.csv models/confusion_matrix.npy models/confusion_matrix.png data/splits
+            git diff --cached --quiet && { echo 'No artifact changes to commit.'; exit 0; }
+            git commit -m 'Train and evaluate advanced CropGuard model'
+
+            if git push origin HEAD:main; then
+              echo 'Trained model and metrics published successfully.'
+              exit 0
+            fi
+            git reset --hard HEAD~1
+            sleep 5
+          done
+
+          echo 'Failed to publish trained artifacts after 5 attempts.'
+          exit 1

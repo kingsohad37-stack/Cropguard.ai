@@ -6,6 +6,306 @@ from PIL import Image, UnidentifiedImageError
 
 st.set_page_config(page_title="CropGuard AI", page_icon="🌿", layout="wide")
 
+# Premium visual layer only: no inference, routes, data, or business logic changed.
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    :root {
+        --cg-ink: #183021;
+        --cg-muted: #5e7065;
+        --cg-green: #2f6f44;
+        --cg-glass: rgba(255,255,255,.58);
+        --cg-glass-strong: rgba(255,255,255,.72);
+        --cg-border: rgba(255,255,255,.58);
+        --cg-shadow: 0 18px 60px rgba(37, 67, 47, .13);
+        --cg-shadow-hover: 0 24px 70px rgba(37, 67, 47, .19);
+        --cg-radius: 22px;
+        --cg-ease: cubic-bezier(.4,0,.2,1);
+    }
+
+    html, body, [class*="css"] {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif;
+    }
+
+    body {
+        background: #eef3ee !important;
+    }
+
+    body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -2;
+        background-image:
+            linear-gradient(135deg, rgba(242,248,239,.74), rgba(238,246,243,.54)),
+            url('/app/static/cropguard-bg.jpg');
+        background-size: cover;
+        background-position: center;
+        filter: saturate(.92);
+        transform: scale(1.035);
+    }
+
+    body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        background:
+            radial-gradient(circle at 15% 10%, rgba(255,255,255,.78), transparent 30%),
+            radial-gradient(circle at 90% 75%, rgba(180,225,187,.28), transparent 34%),
+            rgba(247,250,247,.22);
+    }
+
+    [data-testid="stAppViewContainer"],
+    [data-testid="stHeader"] {
+        background: transparent !important;
+    }
+
+    [data-testid="stAppViewContainer"] > .main {
+        background: transparent !important;
+    }
+
+    .block-container {
+        max-width: 1180px;
+        padding: 3.5rem 2rem 4rem;
+    }
+
+    h1, h2, h3 {
+        color: var(--cg-ink) !important;
+        letter-spacing: -.045em !important;
+        font-weight: 800 !important;
+    }
+
+    h1 {
+        font-size: clamp(2.5rem, 5vw, 4.7rem) !important;
+        line-height: .98 !important;
+        margin-bottom: .45rem !important;
+    }
+
+    h2, h3 {
+        line-height: 1.08 !important;
+    }
+
+    p, label, .stCaption, [data-testid="stMarkdownContainer"] {
+        color: var(--cg-muted);
+    }
+
+    /* Glass navigation/sidebar */
+    [data-testid="stSidebar"] > div:first-child {
+        background: rgba(236,245,237,.54) !important;
+        backdrop-filter: blur(24px) saturate(140%);
+        -webkit-backdrop-filter: blur(24px) saturate(140%);
+        border-right: 1px solid rgba(255,255,255,.62);
+        box-shadow: 10px 0 40px rgba(38,67,48,.08);
+    }
+
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+        gap: .65rem;
+    }
+
+    /* Soft glass cards for the app's existing Streamlit sections */
+    [data-testid="stVerticalBlockBorderWrapper"],
+    [data-testid="stMetric"],
+    [data-testid="stAlert"],
+    [data-testid="stFileUploader"],
+    [data-testid="stCameraInput"],
+    [data-testid="stDataFrame"] {
+        border-radius: var(--cg-radius) !important;
+    }
+
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        background: var(--cg-glass) !important;
+        border: 1px solid var(--cg-border) !important;
+        box-shadow: var(--cg-shadow) !important;
+        backdrop-filter: blur(20px) saturate(135%);
+        -webkit-backdrop-filter: blur(20px) saturate(135%);
+    }
+
+    [data-testid="stMetric"] {
+        background: rgba(255,255,255,.47) !important;
+        border: 1px solid rgba(255,255,255,.58) !important;
+        padding: 1.1rem 1.15rem !important;
+        box-shadow: 0 12px 38px rgba(38,67,48,.09) !important;
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        transition: transform .22s var(--cg-ease), box-shadow .22s var(--cg-ease);
+    }
+
+    [data-testid="stMetric"]:hover {
+        transform: translateY(-3px);
+        box-shadow: var(--cg-shadow-hover) !important;
+    }
+
+    [data-testid="stMetricValue"] {
+        color: var(--cg-ink) !important;
+        font-weight: 800 !important;
+        letter-spacing: -.035em;
+    }
+
+    /* Inputs / uploader */
+    .stTextInput input,
+    .stSelectbox [data-baseweb="select"] > div,
+    [data-testid="stFileUploaderDropzone"],
+    [data-testid="stCameraInput"] > div {
+        background: rgba(255,255,255,.46) !important;
+        border: 1px solid rgba(255,255,255,.68) !important;
+        border-radius: 18px !important;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 8px 30px rgba(38,67,48,.07) !important;
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+    }
+
+    [data-testid="stFileUploaderDropzone"] {
+        padding: 1.5rem !important;
+        transition: transform .22s var(--cg-ease), box-shadow .22s var(--cg-ease), background .22s var(--cg-ease);
+    }
+
+    [data-testid="stFileUploaderDropzone"]:hover {
+        transform: translateY(-2px);
+        background: rgba(255,255,255,.62) !important;
+        box-shadow: var(--cg-shadow-hover) !important;
+    }
+
+    /* Glossy pill buttons */
+    .stButton > button,
+    .stDownloadButton > button {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,.65) !important;
+        border-radius: 999px !important;
+        min-height: 3rem;
+        padding: .65rem 1.25rem !important;
+        font-weight: 700 !important;
+        letter-spacing: -.01em;
+        color: #173621 !important;
+        background: linear-gradient(135deg, rgba(255,255,255,.78), rgba(224,242,228,.48)) !important;
+        box-shadow: 0 10px 28px rgba(43,91,55,.14), inset 0 1px 0 rgba(255,255,255,.9) !important;
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        transition: all .2s ease !important;
+    }
+
+    .stButton > button::before,
+    .stDownloadButton > button::before {
+        content: "";
+        position: absolute;
+        top: -80%;
+        left: -25%;
+        width: 42%;
+        height: 230%;
+        transform: rotate(25deg);
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,.52), transparent);
+        opacity: .65;
+        pointer-events: none;
+        transition: left .45s var(--cg-ease);
+    }
+
+    .stButton > button:hover,
+    .stDownloadButton > button:hover {
+        transform: scale(1.035) translateY(-1px);
+        box-shadow: 0 16px 38px rgba(43,91,55,.2), inset 0 1px 0 rgba(255,255,255,.95) !important;
+    }
+
+    .stButton > button:hover::before,
+    .stDownloadButton > button:hover::before {
+        left: 110%;
+    }
+
+    .stButton > button:active,
+    .stDownloadButton > button:active {
+        transform: scale(.97);
+    }
+
+    /* Primary action gets a richer botanical glass treatment */
+    .stButton > button[kind="primary"] {
+        color: white !important;
+        background: linear-gradient(135deg, rgba(53,121,72,.95), rgba(31,92,51,.84)) !important;
+        box-shadow: 0 14px 34px rgba(39,104,57,.28), inset 0 1px 0 rgba(255,255,255,.28) !important;
+    }
+
+    .stButton > button[kind="primary"]:hover {
+        box-shadow: 0 20px 44px rgba(39,104,57,.34), inset 0 1px 0 rgba(255,255,255,.34) !important;
+    }
+
+    /* Uploaded image / CAM result */
+    [data-testid="stImage"] img {
+        border-radius: 22px !important;
+        border: 1px solid rgba(255,255,255,.62);
+        box-shadow: 0 18px 55px rgba(38,67,48,.14);
+        transition: transform .3s var(--cg-ease), box-shadow .3s var(--cg-ease);
+    }
+
+    [data-testid="stImage"] img:hover {
+        transform: translateY(-3px) scale(1.008);
+        box-shadow: 0 24px 70px rgba(38,67,48,.2);
+    }
+
+    /* Tables */
+    [data-testid="stDataFrame"] {
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,.62) !important;
+        box-shadow: var(--cg-shadow) !important;
+        background: rgba(255,255,255,.45) !important;
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+    }
+
+    /* Alerts */
+    [data-testid="stAlert"] {
+        border: 1px solid rgba(255,255,255,.62) !important;
+        box-shadow: 0 10px 32px rgba(38,67,48,.08) !important;
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+    }
+
+    /* Dividers become softer */
+    hr {
+        border: 0 !important;
+        border-top: 1px solid rgba(54,89,64,.12) !important;
+        margin: 2.5rem 0 !important;
+    }
+
+    /* Startup language modal */
+    [data-testid="stDialog"] > div {
+        background: rgba(245,250,246,.76) !important;
+        border: 1px solid rgba(255,255,255,.72) !important;
+        border-radius: 26px !important;
+        box-shadow: 0 28px 90px rgba(28,63,40,.22) !important;
+        backdrop-filter: blur(26px) saturate(140%);
+        -webkit-backdrop-filter: blur(26px) saturate(140%);
+    }
+
+    [data-testid="stDialog"] h2 {
+        font-size: 1.7rem !important;
+    }
+
+    /* Gentle load-in motion */
+    .main .block-container > div {
+        animation: cgFadeUp .55s var(--cg-ease) both;
+    }
+
+    @keyframes cgFadeUp {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+
+    @media (max-width: 700px) {
+        .block-container { padding: 2rem 1rem 3rem; }
+        h1 { font-size: 2.7rem !important; }
+        [data-testid="stMetric"] { padding: .9rem !important; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 LANG = {
     "English": {"title":"🌿 CropGuard AI", "caption":"PlantVillage-trained MobileNetV2 • real inference • live CAM", "upload_title":"📷 Upload a leaf image", "upload_help":"Drag and drop a JPG, JPEG, PNG, or WEBP image into the box below, or tap Browse files.", "camera":"Or use your camera", "ready":"Ready to analyze", "analyze":"🔬 Analyze with trained model", "spinner":"Running TensorFlow inference and CAM…", "crop":"Crop", "diagnosis":"Diagnosis", "confidence":"Model confidence", "severity":"AI-derived severity estimate", "predictions":"Other model predictions", "advisory":"Treatment advisory", "history":"Actual scan history", "language":"🌐 Language"},
     "ಕನ್ನಡ": {"title":"🌿 CropGuard AI", "caption":"PlantVillage ತರಬೇತಿ ಪಡೆದ MobileNetV2 • ನೈಜ AI ವಿಶ್ಲೇಷಣೆ • CAM", "upload_title":"📷 ಎಲೆಯ ಚಿತ್ರವನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ", "upload_help":"JPG, JPEG, PNG ಅಥವಾ WEBP ಚಿತ್ರವನ್ನು ಇಲ್ಲಿ ಹಾಕಿ ಅಥವಾ Browse files ಒತ್ತಿರಿ.", "camera":"ಅಥವಾ ಕ್ಯಾಮೆರಾ ಬಳಸಿ", "ready":"ವಿಶ್ಲೇಷಣೆಗೆ ಸಿದ್ಧ", "analyze":"🔬 ತರಬೇತಿ ಪಡೆದ ಮಾದರಿಯಿಂದ ವಿಶ್ಲೇಷಿಸಿ", "spinner":"TensorFlow ಮತ್ತು CAM ಮೂಲಕ ವಿಶ್ಲೇಷಿಸಲಾಗುತ್ತಿದೆ…", "crop":"ಬೆಳೆ", "diagnosis":"ರೋಗನಿರ್ಣಯ", "confidence":"ಮಾದರಿ ವಿಶ್ವಾಸ", "severity":"AI ಅಂದಾಜಿನ ತೀವ್ರತೆ", "predictions":"ಇತರ ಮಾದರಿ ಮುನ್ಸೂಚನೆಗಳು", "advisory":"ಚಿಕಿತ್ಸಾ ಸಲಹೆ", "history":"ನಿಜವಾದ ಸ್ಕ್ಯಾನ್ ಇತಿಹಾಸ", "language":"🌐 ಭಾಷೆ"},

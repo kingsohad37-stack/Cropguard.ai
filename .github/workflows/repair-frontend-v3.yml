@@ -1,0 +1,119 @@
+name: CropGuard frontend final repair
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'frontend/app.py'
+      - '.github/workflows/repair-frontend-v3.yml'
+permissions:
+  contents: write
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replace unstable frontend styling and UI-only history display
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('frontend/app.py')
+          s = p.read_text(encoding='utf-8')
+          css = r'''<style>
+          :root{--ink:#123524;--muted:#496457;--green:#237a45;--glass:rgba(255,255,255,.72);--line:rgba(255,255,255,.72);--shadow:0 18px 55px rgba(12,55,31,.16)}
+          html,body,.stApp{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Inter",sans-serif!important;color:var(--ink)!important}
+          body{background:#dfeee2!important}
+          [data-testid="stAppViewContainer"]{background:linear-gradient(180deg,rgba(226,241,230,.28),rgba(210,232,216,.48)),url('/app/static/cropguard-bg.jpg') center/cover fixed no-repeat!important;min-height:100vh!important}
+          [data-testid="stAppViewContainer"]>.main,[data-testid="stAppViewContainer"] .main,[data-testid="stAppViewContainer"] .block-container{background:transparent!important}
+          [data-testid="stHeader"]{background:transparent!important}
+          .main .block-container{width:min(100%,980px)!important;max-width:980px!important;margin:0 auto!important;padding:2rem 1.1rem 4rem!important;position:relative!important;z-index:2!important;overflow-x:hidden!important;text-align:left!important}
+          h1,h2,h3,h4{color:var(--ink)!important;font-weight:800!important;letter-spacing:-.035em!important;line-height:1.1!important;text-align:left!important}
+          h1{font-size:clamp(2.4rem,7vw,4rem)!important;margin:0 0 .45rem!important}
+          h2{font-size:clamp(1.55rem,4vw,2rem)!important}
+          h3{font-size:clamp(1.15rem,3vw,1.4rem)!important}
+          p,[data-testid="stCaptionContainer"],label{color:var(--muted)!important;text-align:left!important;line-height:1.5!important}
+          [data-testid="stVerticalBlockBorderWrapper"]{background:var(--glass)!important;backdrop-filter:blur(18px) saturate(120%)!important;-webkit-backdrop-filter:blur(18px) saturate(120%)!important;border:1px solid var(--line)!important;border-radius:24px!important;box-shadow:var(--shadow)!important}
+          [data-testid="stFileUploaderDropzone"]{background:rgba(255,255,255,.82)!important;border:1px solid rgba(255,255,255,.95)!important;border-radius:22px!important;box-shadow:0 12px 34px rgba(12,55,31,.11)!important}
+          [data-testid="stFileUploaderDropzone"] *{color:var(--ink)!important}
+          [data-testid="stCameraInput"]{width:100%!important;max-width:100%!important;overflow:hidden!important;border-radius:22px!important;background:rgba(255,255,255,.78)!important;border:1px solid rgba(255,255,255,.9)!important}
+          [data-testid="stCameraInput"] video,[data-testid="stCameraInput"] img{max-width:100%!important;width:100%!important;height:auto!important;object-fit:contain!important}
+          .stButton>button,.stDownloadButton>button{width:auto!important;min-height:2.9rem!important;border-radius:999px!important;padding:.62rem 1.25rem!important;border:1px solid rgba(255,255,255,.9)!important;color:#173d27!important;background:linear-gradient(145deg,rgba(255,255,255,.96),rgba(225,241,229,.86))!important;box-shadow:0 9px 28px rgba(16,76,40,.14),inset 0 1px 0 #fff!important;font-weight:750!important;transition:transform .2s cubic-bezier(.4,0,.2,1),box-shadow .2s ease!important}
+          .stButton>button:hover,.stDownloadButton>button:hover{transform:scale(1.03)!important;box-shadow:0 14px 34px rgba(16,76,40,.2)!important}
+          .stButton>button:active,.stDownloadButton>button:active{transform:scale(.97)!important}
+          .stButton>button[kind="primary"]{color:#fff!important;background:linear-gradient(135deg,#2d8a50,#17643a)!important}
+          .stTextInput input,[data-baseweb="select"]>div{background:rgba(255,255,255,.94)!important;color:var(--ink)!important;border:1px solid rgba(30,82,48,.16)!important;border-radius:16px!important;min-height:2.85rem!important}
+          [data-baseweb="select"] *{color:var(--ink)!important}
+          [data-testid="stMetric"]{background:rgba(255,255,255,.86)!important;border:1px solid rgba(255,255,255,.92)!important;border-radius:20px!important;box-shadow:0 10px 30px rgba(12,55,31,.1)!important}
+          [data-testid="stMetricValue"],[data-testid="stMetricLabel"]{color:var(--ink)!important}
+          [data-testid="stImage"]{width:100%!important;max-width:100%!important}
+          [data-testid="stImage"] img{display:block!important;width:100%!important;max-width:100%!important;height:auto!important;object-fit:contain!important;border-radius:20px!important}
+          [data-testid="stDataFrame"]{width:100%!important;max-width:100%!important;border-radius:18px!important;overflow:hidden!important}
+          [data-testid="stDataFrame"] iframe{max-width:100%!important}
+          [data-testid="stDialog"]>div,[role="dialog"]{width:min(92vw,520px)!important;max-width:calc(100vw - 24px)!important;background:rgba(248,252,249,.99)!important;color:var(--ink)!important;border:1px solid #fff!important;border-radius:24px!important;box-shadow:0 28px 80px rgba(12,50,27,.24)!important;overflow:hidden!important}
+          [data-testid="stDialog"] h1,[data-testid="stDialog"] h2,[data-testid="stDialog"] h3,[data-testid="stDialog"] p,[data-testid="stDialog"] label,[role="dialog"] h1,[role="dialog"] h2,[role="dialog"] h3,[role="dialog"] p,[role="dialog"] label{color:var(--ink)!important;text-align:left!important}
+          [data-testid="stDialog"] .stButton>button,[role="dialog"] .stButton>button{width:100%!important}
+          hr{border:0!important;border-top:1px solid rgba(35,79,47,.14)!important}
+          pre,code{font-family:inherit!important}
+          @media(max-width:700px){
+            [data-testid="stAppViewContainer"]{background-attachment:scroll!important;background-position:center top!important}
+            .main .block-container{width:100%!important;max-width:100%!important;padding:1.2rem .8rem 3rem!important}
+            .main .block-container [data-testid="stHorizontalBlock"]{display:block!important}
+            .main .block-container [data-testid="column"]{width:100%!important;max-width:100%!important;min-width:0!important;margin:0 0 .7rem!important}
+            h1{font-size:clamp(2.1rem,10vw,2.8rem)!important}
+            h2{font-size:1.55rem!important}
+            h3{font-size:1.2rem!important}
+            p,[data-testid="stCaptionContainer"],label{font-size:.98rem!important}
+            [data-testid="stFileUploaderDropzone"],[data-testid="stCameraInput"]{border-radius:20px!important}
+            .stButton>button,.stDownloadButton>button{width:100%!important}
+          }
+          </style>'''
+          s = re.sub(r'<style>.*?</style>', css, s, count=1, flags=re.S)
+          # Keep the camera available for capture, but aggressively stop tracks when the page/component is hidden.
+          s = re.sub(r'components\.html\(\s*"""<script>.*?</script>""",\s*height=0,\s*\)', '''components.html(
+              """<script>
+              (() => {
+                const stop = (root) => {
+                  try {
+                    root.querySelectorAll('video').forEach(v => {
+                      const stream=v.srcObject;
+                      if(stream && stream.getTracks) stream.getTracks().forEach(t=>t.stop());
+                      v.srcObject=null;
+                    });
+                    root.querySelectorAll('iframe').forEach(f=>{try{stop(f.contentWindow.document)}catch(e){}});
+                  } catch(e) {}
+                };
+                const cleanup=()=>{try{stop(window.parent.document)}catch(e){};stop(document)};
+                document.addEventListener('visibilitychange',cleanup);
+                window.addEventListener('pagehide',cleanup);
+                window.addEventListener('beforeunload',cleanup);
+                setInterval(cleanup,1000);
+              })();
+              </script>""",
+              height=0,
+          )''', s, count=1, flags=re.S)
+          # Remove code-like identifiers from the scan-history PRESENTATION only; underlying API/data stays unchanged.
+          old='''history = response.json(); st.dataframe(history, use_container_width=True) if history else st.info("No scans yet.")'''
+          new='''history = response.json()
+        if history:
+            cleaned_history = [
+                {k: v for k, v in row.items() if "sha" not in str(k).lower() and "code" not in str(k).lower() and "token" not in str(k).lower()}
+                for row in history if isinstance(row, dict)
+            ]
+            st.dataframe(cleaned_history or history, use_container_width=True, hide_index=True)
+        else:
+            st.info("No scans yet.")'''
+          if old not in s:
+              raise SystemExit('history target not found')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+          PY
+      - name: Validate frontend
+        run: python -m py_compile frontend/app.py
+      - name: Commit repair and remove temporary workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/app.py
+          git rm .github/workflows/repair-frontend-v3.yml
+          git commit -m 'Fix frontend alignment, history display and camera cleanup'
+          git push

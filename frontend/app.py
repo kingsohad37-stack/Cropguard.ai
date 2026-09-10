@@ -38,14 +38,23 @@ st.markdown(
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif !important;
     }
 
-    body { background: #edf3ee !important; }
+    body {
+        background: #eaf3ec url('/app/static/cropguard-bg.jpg') center / cover fixed no-repeat !important;
+    }
 
     [data-testid="stAppViewContainer"] {
         background:
-            radial-gradient(circle at 8% 0%, rgba(255,255,255,.95), transparent 34%),
-            radial-gradient(circle at 92% 82%, rgba(196,228,202,.42), transparent 32%),
-            linear-gradient(145deg, #f5f9f5 0%, #eaf2ec 100%) !important;
+            linear-gradient(135deg, rgba(245,250,246,.74), rgba(226,240,230,.82)),
+            url('/app/static/cropguard-bg.jpg') center / cover fixed no-repeat !important;
+        min-height: 100vh;
     }
+
+    [data-testid="stAppViewContainer"]::before {
+        content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+        background: radial-gradient(circle at 15% 5%, rgba(255,255,255,.68), transparent 36%);
+    }
+
+    .main .block-container { position: relative; z-index: 1; }
 
     [data-testid="stHeader"] { background: transparent !important; }
 
@@ -71,12 +80,12 @@ st.markdown(
     p, label, [data-testid="stCaptionContainer"] { color: var(--cg-muted); }
 
     [data-testid="stSidebar"] > div:first-child {
-        background: rgba(245,249,245,.94) !important;
+        background: rgba(246,250,247,.68) !important; backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
         border-right: 1px solid rgba(48,92,61,.10) !important;
     }
 
     [data-testid="stVerticalBlockBorderWrapper"] {
-        background: var(--cg-surface) !important;
+        background: rgba(255,255,255,.42) !important; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
         border: 1px solid var(--cg-border) !important;
         border-radius: var(--cg-radius) !important;
         box-shadow: var(--cg-shadow) !important;
@@ -119,7 +128,7 @@ st.markdown(
         color: #173621 !important;
         background: rgba(255,255,255,.86) !important;
         box-shadow: 0 7px 22px rgba(35,82,49,.10), inset 0 1px 0 rgba(255,255,255,.96) !important;
-        transition: box-shadow .2s ease, background .2s ease !important;
+        transition: all .2s ease !important;
     }
 
     .stButton > button:hover, .stDownloadButton > button:hover {

@@ -48,7 +48,7 @@ p,li,[data-testid="stCaptionContainer"],label{color:var(--cg-muted)!important;fo
 [data-testid="stImage"] img{display:block!important;width:100%!important;height:auto!important;max-width:100%!important;object-fit:contain!important;border-radius:22px!important;border:1px solid rgba(255,255,255,.9)!important;box-shadow:0 18px 48px rgba(18,70,37,.14)!important}
 [data-testid="stDataFrame"],[data-testid="stTable"]{width:100%!important;max-width:100%!important;border-radius:20px!important;overflow:hidden!important}
 /* Remove any accidental code/debug presentation below Scan History. */
-pre,[data-testid="stCodeBlock"],.stCodeBlock,[data-testid="stException"]{display:none!important}
+pre,code,[data-testid="stCodeBlock"],.stCodeBlock,[data-testid="stException"],[data-testid="stMarkdownContainer"] pre,[data-testid="stMarkdownContainer"] code{display:none!important}\n/* Hide Streamlit source/debug remnants without touching functional widgets. */\n[data-testid="stException"]{visibility:hidden!important;height:0!important;margin:0!important;padding:0!important;overflow:hidden!important}
 footer{visibility:hidden!important}
 [data-testid="stAlert"]{border-radius:18px!important}
 hr{border:0!important;border-top:1px solid rgba(28,83,46,.14)!important}

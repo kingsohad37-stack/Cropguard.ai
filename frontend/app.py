@@ -5,8 +5,13 @@ import streamlit as st
 from PIL import Image, UnidentifiedImageError
 
 st.set_page_config(page_title="CropGuard AI", page_icon="🌿", layout="wide")
-st.title("🌿 CropGuard AI")
-st.caption("PlantVillage-trained MobileNetV2 • real inference • live CAM")
+
+LANG = {
+    "English": {"title":"🌿 CropGuard AI", "caption":"PlantVillage-trained MobileNetV2 • real inference • live CAM", "upload_title":"📷 Upload a leaf image", "upload_help":"Drag and drop a JPG, JPEG, PNG, or WEBP image into the box below, or tap Browse files.", "camera":"Or use your camera", "ready":"Ready to analyze", "analyze":"🔬 Analyze with trained model", "spinner":"Running TensorFlow inference and CAM…", "crop":"Crop", "diagnosis":"Diagnosis", "confidence":"Model confidence", "severity":"AI-derived severity estimate", "predictions":"Other model predictions", "advisory":"Treatment advisory", "history":"Actual scan history", "language":"🌐 Language"},
+    "ಕನ್ನಡ": {"title":"🌿 CropGuard AI", "caption":"PlantVillage ತರಬೇತಿ ಪಡೆದ MobileNetV2 • ನೈಜ AI ವಿಶ್ಲೇಷಣೆ • CAM", "upload_title":"📷 ಎಲೆಯ ಚಿತ್ರವನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ", "upload_help":"JPG, JPEG, PNG ಅಥವಾ WEBP ಚಿತ್ರವನ್ನು ಇಲ್ಲಿ ಹಾಕಿ ಅಥವಾ Browse files ಒತ್ತಿರಿ.", "camera":"ಅಥವಾ ಕ್ಯಾಮೆರಾ ಬಳಸಿ", "ready":"ವಿಶ್ಲೇಷಣೆಗೆ ಸಿದ್ಧ", "analyze":"🔬 ತರಬೇತಿ ಪಡೆದ ಮಾದರಿಯಿಂದ ವಿಶ್ಲೇಷಿಸಿ", "spinner":"TensorFlow ಮತ್ತು CAM ಮೂಲಕ ವಿಶ್ಲೇಷಿಸಲಾಗುತ್ತಿದೆ…", "crop":"ಬೆಳೆ", "diagnosis":"ರೋಗನಿರ್ಣಯ", "confidence":"ಮಾದರಿ ವಿಶ್ವಾಸ", "severity":"AI ಅಂದಾಜಿನ ತೀವ್ರತೆ", "predictions":"ಇತರ ಮಾದರಿ ಮುನ್ಸೂಚನೆಗಳು", "advisory":"ಚಿಕಿತ್ಸಾ ಸಲಹೆ", "history":"ನಿಜವಾದ ಸ್ಕ್ಯಾನ್ ಇತಿಹಾಸ", "language":"🌐 ಭಾಷೆ"},
+    "मराठी": {"title":"🌿 CropGuard AI", "caption":"PlantVillage प्रशिक्षित MobileNetV2 • वास्तविक AI विश्लेषण • CAM", "upload_title":"📷 पानाचा फोटो अपलोड करा", "upload_help":"JPG, JPEG, PNG किंवा WEBP फोटो येथे टाका किंवा Browse files दाबा.", "camera":"किंवा कॅमेरा वापरा", "ready":"विश्लेषणासाठी तयार", "analyze":"🔬 प्रशिक्षित मॉडेलने विश्लेषण करा", "spinner":"TensorFlow आणि CAM द्वारे विश्लेषण सुरू आहे…", "crop":"पीक", "diagnosis":"निदान", "confidence":"मॉडेलचा विश्वास", "severity":"AI अंदाजित तीव्रता", "predictions":"इतर मॉडेल अंदाज", "advisory":"उपचार सल्ला", "history":"वास्तविक स्कॅन इतिहास", "language":"🌐 भाषा"},
+    "తెలుగు": {"title":"🌿 CropGuard AI", "caption":"PlantVillage శిక్షణ పొందిన MobileNetV2 • నిజమైన AI విశ్లేషణ • CAM", "upload_title":"📷 ఆకు చిత్రాన్ని అప్‌లోడ్ చేయండి", "upload_help":"JPG, JPEG, PNG లేదా WEBP చిత్రాన్ని ఇక్కడ డ్రాగ్ చేయండి లేదా Browse files నొక్కండి.", "camera":"లేదా కెమెరాను ఉపయోగించండి", "ready":"విశ్లేషణకు సిద్ధంగా ఉంది", "analyze":"🔬 శిక్షణ పొందిన మోడల్‌తో విశ్లేషించండి", "spinner":"TensorFlow మరియు CAM ద్వారా విశ్లేషిస్తోంది…", "crop":"పంట", "diagnosis":"రోగ నిర్ధారణ", "confidence":"మోడల్ విశ్వాసం", "severity":"AI అంచనా తీవ్రత", "predictions":"ఇతర మోడల్ అంచనాలు", "advisory":"చికిత్స సలహా", "history":"నిజమైన స్కాన్ చరిత్ర", "language":"🌐 భాష"},
+}
 
 with st.sidebar:
     configured_api = os.environ.get("CROPGUARD_API_URL", "http://localhost:8000").strip().rstrip("/")
@@ -27,15 +32,12 @@ with st.sidebar:
         st.error("Backend unavailable")
         st.caption(str(exc))
 
+st.title("🌿 CropGuard AI")
+st.caption("PlantVillage-trained MobileNetV2 • real inference • live CAM")
+
 st.subheader("📷 Upload a leaf image")
 st.caption("Drag and drop a JPG, JPEG, PNG, or WEBP image into the box below, or tap Browse files.")
-upload = st.file_uploader(
-    "Drop your leaf image here",
-    type=["jpg", "jpeg", "png", "webp"],
-    accept_multiple_files=False,
-    key="leaf_upload",
-)
-
+upload = st.file_uploader("Drop your leaf image here", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=False, key="leaf_upload")
 st.caption("Or use your camera")
 camera = st.camera_input("Take a leaf photo", key="leaf_camera")
 source = upload if upload is not None else camera
@@ -61,68 +63,51 @@ if source is not None and image_bytes is not None:
         else:
             try:
                 with st.spinner("Running TensorFlow inference and CAM…"):
-                    response = requests.post(
-                        f"{api}/predict",
-                        files={
-                            "file": (
-                                source.name or "camera.jpg",
-                                image_bytes,
-                                source.type or "image/jpeg",
-                            )
-                        },
-                        timeout=180,
-                    )
+                    response = requests.post(f"{api}/predict", files={"file": (source.name or "camera.jpg", image_bytes, source.type or "image/jpeg")}, timeout=180)
                 if response.status_code >= 400:
-                    try:
-                        details = response.json().get("detail", response.text)
-                    except ValueError:
-                        details = response.text
+                    try: details = response.json().get("detail", response.text)
+                    except ValueError: details = response.text
                     st.error(f"Backend error ({response.status_code}): {details}")
                 else:
                     data = response.json()
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("Crop", data["crop"])
-                    c2.metric("Diagnosis", data["disease"])
-                    c3.metric("Model confidence", f"{data['confidence'] * 100:.2f}%")
+                    c1.metric("Crop", data["crop"]); c2.metric("Diagnosis", data["disease"]); c3.metric("Model confidence", f"{data['confidence'] * 100:.2f}%")
                     st.metric("AI-derived severity estimate", f"{data['severity_score']:.2f}%")
                     st.caption(f"Leaf area above activation threshold: {data['heatmap_coverage_percent']:.2f}% • Image SHA-256: {data['image_sha256']}")
                     st.image(data["heatmap_data_url"], caption="CAM derived from this uploaded image")
-                    if data.get("storage_status") == "unavailable":
-                        st.warning("Prediction completed, but scan history could not be saved right now.")
+                    if data.get("storage_status") == "unavailable": st.warning("Prediction completed, but scan history could not be saved right now.")
                     st.subheader("Other model predictions")
                     st.table([{"class": p["label"], "probability": f"{p['probability'] * 100:.2f}%"} for p in data["top_predictions"]])
                     advisory = data["advisory"]
                     st.subheader("Treatment advisory")
                     st.write(advisory["summary"])
-                    for action in advisory["actions"]:
-                        st.write(f"• {action}")
-                    for source_link in advisory.get("sources", []):
-                        st.caption(source_link)
-            except requests.RequestException as exc:
-                st.error(f"Backend/inference error: {exc}")
+                    for action in advisory["actions"]: st.write(f"• {action}")
+                    for source_link in advisory.get("sources", []): st.caption(source_link)
+            except requests.RequestException as exc: st.error(f"Backend/inference error: {exc}")
 
 st.divider()
 st.subheader("Model evidence")
 try:
     response = requests.get(f"{api}/metrics", timeout=20)
     if response.ok:
-        metrics = response.json()
-        st.write(f"Measured held-out test accuracy: **{metrics['test_accuracy'] * 100:.2f}%**")
-    else:
-        st.info("No measured metrics yet. Run the real training and evaluation pipeline first.")
-except requests.RequestException:
-    st.info("Start the FastAPI backend to view measured metrics.")
+        metrics = response.json(); st.write(f"Measured held-out test accuracy: **{metrics['test_accuracy'] * 100:.2f}%**")
+    else: st.info("No measured metrics yet. Run the real training and evaluation pipeline first.")
+except requests.RequestException: st.info("Start the FastAPI backend to view measured metrics.")
 
 st.subheader("Actual scan history")
 try:
     response = requests.get(f"{api}/history", timeout=20)
     if response.ok:
-        history = response.json()
-        st.dataframe(history, use_container_width=True) if history else st.info("No scans yet.")
-    else:
-        st.info("Scan history is unavailable right now.")
-except requests.RequestException:
-    st.info("Start the FastAPI backend to view scan history.")
+        history = response.json(); st.dataframe(history, use_container_width=True) if history else st.info("No scans yet.")
+    else: st.info("Scan history is unavailable right now.")
+except requests.RequestException: st.info("Start the FastAPI backend to view scan history.")
 
 st.divider()
 st.caption("CropGuard uses genuine model inference only; no prediction results or confidence scores are hardcoded.")
+
+# Translation control is intentionally at the very bottom of the page.
+st.markdown("---")
+st.markdown("### 🌐 Translate / ಭಾಷೆ / भाषा / భాష")
+language = st.selectbox("Select language", ["English", "ಕನ್ನಡ", "मराठी", "తెలుగు"], key="site_language", label_visibility="collapsed")
+if language != "English":
+    st.info(f"{language} translation option selected. Core prediction output remains generated by the trained model.")

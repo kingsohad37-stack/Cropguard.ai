@@ -6,7 +6,7 @@ from PIL import Image, UnidentifiedImageError
 
 st.set_page_config(page_title="CropGuard AI", page_icon="🌿", layout="wide")
 st.title("🌿 CropGuard AI")
-st.caption("PlantVillage-trained MobileNetV2 • real inference • live Grad-CAM")
+st.caption("PlantVillage-trained MobileNetV2 • real inference • live CAM")
 
 with st.sidebar:
     configured_api = os.environ.get("CROPGUARD_API_URL", "http://localhost:8000").strip().rstrip("/")
@@ -21,7 +21,7 @@ with st.sidebar:
         if health.get("model_loaded"):
             st.success("Real trained model loaded")
         else:
-            st.warning("Model unavailable — the Analyze button will still let you test the backend.")
+            st.warning("Model unavailable")
             st.caption(health.get("model_error", "No model loaded."))
     except (requests.RequestException, ValueError) as exc:
         st.error("Backend unavailable")
@@ -60,7 +60,7 @@ if source is not None and image_bytes is not None:
             st.error("Backend URL is missing.")
         else:
             try:
-                with st.spinner("Running TensorFlow inference and Grad-CAM…"):
+                with st.spinner("Running TensorFlow inference and CAM…"):
                     response = requests.post(
                         f"{api}/predict",
                         files={
@@ -72,16 +72,13 @@ if source is not None and image_bytes is not None:
                         },
                         timeout=180,
                     )
-                if response.status_code == 503:
-                    st.error("The backend is reachable, but no real trained model is loaded yet.")
+                if response.status_code >= 400:
                     try:
-                        details = response.json()
-                        if details.get("detail"):
-                            st.caption(str(details["detail"]))
+                        details = response.json().get("detail", response.text)
                     except ValueError:
-                        pass
+                        details = response.text
+                    st.error(f"Backend error ({response.status_code}): {details}")
                 else:
-                    response.raise_for_status()
                     data = response.json()
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Crop", data["crop"])
@@ -89,7 +86,9 @@ if source is not None and image_bytes is not None:
                     c3.metric("Model confidence", f"{data['confidence'] * 100:.2f}%")
                     st.metric("AI-derived severity estimate", f"{data['severity_score']:.2f}%")
                     st.caption(f"Leaf area above activation threshold: {data['heatmap_coverage_percent']:.2f}% • Image SHA-256: {data['image_sha256']}")
-                    st.image(data["heatmap_data_url"], caption="Grad-CAM derived from this uploaded image")
+                    st.image(data["heatmap_data_url"], caption="CAM derived from this uploaded image")
+                    if data.get("storage_status") == "unavailable":
+                        st.warning("Prediction completed, but scan history could not be saved right now.")
                     st.subheader("Other model predictions")
                     st.table([{"class": p["label"], "probability": f"{p['probability'] * 100:.2f}%"} for p in data["top_predictions"]])
                     advisory = data["advisory"]

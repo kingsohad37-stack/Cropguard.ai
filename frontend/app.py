@@ -13,6 +13,32 @@ LANG = {
     "తెలుగు": {"title":"🌿 CropGuard AI", "caption":"PlantVillage శిక్షణ పొందిన MobileNetV2 • నిజమైన AI విశ్లేషణ • CAM", "upload_title":"📷 ఆకు చిత్రాన్ని అప్‌లోడ్ చేయండి", "upload_help":"JPG, JPEG, PNG లేదా WEBP చిత్రాన్ని ఇక్కడ డ్రాగ్ చేయండి లేదా Browse files నొక్కండి.", "camera":"లేదా కెమెరాను ఉపయోగించండి", "ready":"విశ్లేషణకు సిద్ధంగా ఉంది", "analyze":"🔬 శిక్షణ పొందిన మోడల్‌తో విశ్లేషించండి", "spinner":"TensorFlow మరియు CAM ద్వారా విశ్లేషిస్తోంది…", "crop":"పంట", "diagnosis":"రోగ నిర్ధారణ", "confidence":"మోడల్ విశ్వాసం", "severity":"AI అంచనా తీవ్రత", "predictions":"ఇతర మోడల్ అంచనాలు", "advisory":"చికిత్స సలహా", "history":"నిజమైన స్కాన్ చరిత్ర", "language":"🌐 భాష"},
 }
 
+if "site_language" not in st.session_state:
+    st.session_state.site_language = "English"
+    st.session_state.show_language_popup = True
+else:
+    st.session_state.show_language_popup = False
+
+@st.dialog("🌐 Choose your language")
+def language_popup():
+    st.write("Select a language to use on CropGuard AI.")
+    selected = st.selectbox(
+        "Language",
+        ["English", "ಕನ್ನಡ", "मराठी", "తెలుగు"],
+        index=["English", "ಕನ್ನಡ", "मराठी", "తెలుగు"].index(st.session_state.site_language),
+        key="language_popup_select",
+    )
+    if st.button("Continue", type="primary", use_container_width=True):
+        st.session_state.site_language = selected
+        st.session_state.show_language_popup = False
+        st.rerun()
+
+if st.session_state.get("show_language_popup", False):
+    language_popup()
+
+language = st.session_state.site_language
+T = LANG[language]
+
 with st.sidebar:
     configured_api = os.environ.get("CROPGUARD_API_URL", "http://localhost:8000").strip().rstrip("/")
     if configured_api and not configured_api.startswith(("http://", "https://")):
@@ -32,13 +58,13 @@ with st.sidebar:
         st.error("Backend unavailable")
         st.caption(str(exc))
 
-st.title("🌿 CropGuard AI")
-st.caption("PlantVillage-trained MobileNetV2 • real inference • live CAM")
+st.title(T["title"])
+st.caption(T["caption"])
 
-st.subheader("📷 Upload a leaf image")
-st.caption("Drag and drop a JPG, JPEG, PNG, or WEBP image into the box below, or tap Browse files.")
+st.subheader(T["upload_title"])
+st.caption(T["upload_help"])
 upload = st.file_uploader("Drop your leaf image here", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=False, key="leaf_upload")
-st.caption("Or use your camera")
+st.caption(T["camera"])
 camera = st.camera_input("Take a leaf photo", key="leaf_camera")
 source = upload if upload is not None else camera
 
@@ -56,13 +82,13 @@ else:
     image_bytes = None
 
 if source is not None and image_bytes is not None:
-    st.markdown("### Ready to analyze")
-    if st.button("🔬 Analyze with trained model", type="primary", key="analyze_leaf"):
+    st.markdown(f"### {T['ready']}")
+    if st.button(T["analyze"], type="primary", key="analyze_leaf"):
         if not api:
             st.error("Backend URL is missing.")
         else:
             try:
-                with st.spinner("Running TensorFlow inference and CAM…"):
+                with st.spinner(T["spinner"]):
                     response = requests.post(f"{api}/predict", files={"file": (source.name or "camera.jpg", image_bytes, source.type or "image/jpeg")}, timeout=180)
                 if response.status_code >= 400:
                     try: details = response.json().get("detail", response.text)
@@ -71,15 +97,15 @@ if source is not None and image_bytes is not None:
                 else:
                     data = response.json()
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("Crop", data["crop"]); c2.metric("Diagnosis", data["disease"]); c3.metric("Model confidence", f"{data['confidence'] * 100:.2f}%")
-                    st.metric("AI-derived severity estimate", f"{data['severity_score']:.2f}%")
+                    c1.metric(T["crop"], data["crop"]); c2.metric(T["diagnosis"], data["disease"]); c3.metric(T["confidence"], f"{data['confidence'] * 100:.2f}%")
+                    st.metric(T["severity"], f"{data['severity_score']:.2f}%")
                     st.caption(f"Leaf area above activation threshold: {data['heatmap_coverage_percent']:.2f}% • Image SHA-256: {data['image_sha256']}")
                     st.image(data["heatmap_data_url"], caption="CAM derived from this uploaded image")
                     if data.get("storage_status") == "unavailable": st.warning("Prediction completed, but scan history could not be saved right now.")
-                    st.subheader("Other model predictions")
+                    st.subheader(T["predictions"])
                     st.table([{"class": p["label"], "probability": f"{p['probability'] * 100:.2f}%"} for p in data["top_predictions"]])
                     advisory = data["advisory"]
-                    st.subheader("Treatment advisory")
+                    st.subheader(T["advisory"])
                     st.write(advisory["summary"])
                     for action in advisory["actions"]: st.write(f"• {action}")
                     for source_link in advisory.get("sources", []): st.caption(source_link)
@@ -94,7 +120,7 @@ try:
     else: st.info("No measured metrics yet. Run the real training and evaluation pipeline first.")
 except requests.RequestException: st.info("Start the FastAPI backend to view measured metrics.")
 
-st.subheader("Actual scan history")
+st.subheader(T["history"])
 try:
     response = requests.get(f"{api}/history", timeout=20)
     if response.ok:
@@ -104,10 +130,3 @@ except requests.RequestException: st.info("Start the FastAPI backend to view sca
 
 st.divider()
 st.caption("CropGuard uses genuine model inference only; no prediction results or confidence scores are hardcoded.")
-
-# Translation control is intentionally at the very bottom of the page.
-st.markdown("---")
-st.markdown("### 🌐 Translate / ಭಾಷೆ / भाषा / భాష")
-language = st.selectbox("Select language", ["English", "ಕನ್ನಡ", "मराठी", "తెలుగు"], key="site_language", label_visibility="collapsed")
-if language != "English":
-    st.info(f"{language} translation option selected. Core prediction output remains generated by the trained model.")

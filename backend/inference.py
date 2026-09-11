@@ -39,21 +39,14 @@ class InferenceEngine:
             raise RuntimeError("Classifier and MobileNetV2 feature dimensions do not match for CAM.")
         self.classifier_weights = tf.convert_to_tensor(kernel, dtype=tf.float32)
 
-        # Build one graph that returns both the normal prediction and the MobileNet
-        # feature maps. This avoids running the 14M-parameter backbone twice per
-        # request, which was unnecessarily expensive on Render's CPU instance.
-        try:
-            self._prediction_cam_model = tf.keras.Model(
-                self.model.input,
-                [self.base_model.output, self.model.output],
-                name="cropguard_prediction_cam",
-            )
-        except Exception as exc:
-            raise RuntimeError(f"Could not construct the inference/CAM graph: {exc}") from exc
-
+        # Do not splice the nested MobileNet model into a new Functional graph.
+        # Keras 3 can reject that graph when the saved checkpoint contains nested
+        # symbolic tensors. Instead, run the already-valid trained model and the
+        # already-loaded backbone separately on the same preprocessed image.
         dummy = tf.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=tf.float32)
-        with _INFERENCE_LOCK:
-            _ = self._prediction_cam_model(dummy, training=False)
+        with _INFERENCE_LOCK, tf.device("/CPU:0"):
+            _ = self.model(dummy, training=False)
+            _ = self.base_model(dummy, training=False)
         del dummy
         gc.collect()
         print(f"[CropGuard] REAL TRAINED MODEL LOADED successfully: {model_path}", flush=True)
@@ -88,10 +81,9 @@ class InferenceEngine:
         with _INFERENCE_LOCK:
             try:
                 original, x = self._preprocess(raw)
-                # The training graph already contains MobileNetV2 preprocessing.
-                # Use that exact graph so inference and CAM see identical inputs.
                 with tf.device("/CPU:0"):
-                    feature_maps, predictions = self._prediction_cam_model(x, training=False)
+                    predictions = self.model(x, training=False)
+                    feature_maps = self.base_model(x, training=False)
 
                 class_index = tf.argmax(predictions[0], axis=-1)
                 idx = int(class_index.numpy())

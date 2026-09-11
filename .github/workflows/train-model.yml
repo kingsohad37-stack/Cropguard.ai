@@ -46,24 +46,48 @@ jobs:
 
       - name: Download the real PlantVillage dataset
         run: |
+          set -euo pipefail
           mkdir -p /tmp/plantvillage
-          curl -L --fail --retry 5 --retry-delay 5 -o /tmp/plantvillage/data.zip https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/data.zip
-          curl -L --fail --retry 5 --retry-delay 5 -o /tmp/plantvillage/train.txt https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/splits/color_train.txt
-          curl -L --fail --retry 5 --retry-delay 5 -o /tmp/plantvillage/test.txt https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/splits/color_test.txt
+          curl -L --fail --retry 8 --retry-all-errors --retry-delay 5 -o /tmp/plantvillage/data.zip https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/data.zip
+          curl -L --fail --retry 8 --retry-all-errors --retry-delay 5 -o /tmp/plantvillage/train.txt https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/splits/color_train.txt
+          curl -L --fail --retry 8 --retry-all-errors --retry-delay 5 -o /tmp/plantvillage/test.txt https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/splits/color_test.txt
           unzip -q /tmp/plantvillage/data.zip -d /tmp/plantvillage/images
+          test -s /tmp/plantvillage/train.txt
+          test -s /tmp/plantvillage/test.txt
+          test -d /tmp/plantvillage/images
 
       - name: Build leakage-safe CSV splits
         run: python scripts/prepare_plantvillage.py --root /tmp/plantvillage/images --train-list /tmp/plantvillage/train.txt --test-list /tmp/plantvillage/test.txt
+
+      - name: Verify generated splits
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          from pathlib import Path
+          for name in ('train', 'val', 'test'):
+              p = Path(f'data/splits/{name}.csv')
+              if not p.exists() or p.stat().st_size == 0:
+                  raise SystemExit(f'Missing or empty split: {p}')
+              df = pd.read_csv(p)
+              if df.empty or not {'path','label'}.issubset(df.columns):
+                  raise SystemExit(f'Invalid split: {p}')
+              print(f'{name}: {len(df)} samples, {df.label.nunique()} classes')
+          PY
 
       - name: Train advanced model
         env:
           TF_CPP_MIN_LOG_LEVEL: '1'
           TF_NUM_INTRAOP_THREADS: '2'
           TF_NUM_INTEROP_THREADS: '2'
-        run: python scripts/train.py --epochs 12 --fine-tune-epochs 8 --batch-size 16
+        run: |
+          set -euo pipefail
+          # Keep every class represented while bounding CPU training time on GitHub runners.
+          # This is still real PlantVillage data; no predictions or metrics are mocked.
+          python scripts/train.py --epochs 12 --fine-tune-epochs 8 --batch-size 16 --max-per-class 500
 
       - name: Verify trained artifacts before evaluation
         run: |
+          set -euo pipefail
           test -s models/plantvillage_best.keras
           test -s models/training_log.csv
           python - <<'PY'
@@ -72,6 +96,8 @@ jobs:
           p=Path('models/metrics.json')
           if not p.exists(): raise SystemExit('metrics.json missing')
           m=json.loads(p.read_text())
+          if m.get('classes') != 38: raise SystemExit(f"Unexpected class count: {m.get('classes')}")
+          if not 0 < float(m.get('test_accuracy', 0)) <= 1: raise SystemExit('Invalid test accuracy')
           print('Training artifact verified:', m)
           PY
 

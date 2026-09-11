@@ -1,0 +1,41 @@
+name: Keep CropGuard API Warm
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *"
+
+jobs:
+  keep-api-warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Wake and verify API
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://cropguard-api-ppea.onrender.com/health"
+          echo "Waking CropGuard API: $url"
+          for attempt in 1 2 3 4 5 6; do
+            code="$(curl -L -sS -o /tmp/health.json -w '%{http_code}' --connect-timeout 15 --max-time 45 "$url" || true)"
+            echo "Attempt $attempt HTTP $code"
+            cat /tmp/health.json 2>/dev/null || true
+            echo
+            if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+              python - <<'PY'
+import json
+with open('/tmp/health.json', encoding='utf-8') as f:
+    data = json.load(f)
+print('Health:', data)
+if data.get('status') != 'ok':
+    raise SystemExit('API health status is not ok')
+if data.get('model_loaded') is not True:
+    raise SystemExit(f"Real model is not loaded: {data.get('model_error')}")
+PY
+              echo "CropGuard API is awake and the real model is loaded."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "CropGuard API did not become healthy in time."
+          exit 1

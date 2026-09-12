@@ -33,8 +33,11 @@ class InferenceEngine:
             raise RuntimeError(f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels.")
 
         self.base_model = self._find_mobilenet_base()
-        self.pooling = self._find_layer(tf.keras.layers.GlobalAveragePooling2D)
-        self.batch_norm = self._find_layer(tf.keras.layers.BatchNormalization)
+        self.pooling = self._find_named_layer("GlobalAveragePooling2D")
+        # Keras/TensorFlow can deserialize the saved Keras 3 layer class through a
+        # different Python class object. Match by actual deserialized class name,
+        # not isinstance(), so the real saved BatchNorm is always found.
+        self.batch_norm = self._find_named_layer("BatchNormalization")
         self.classifier = self._find_classifier()
         kernel = self.classifier.kernel
         if kernel.shape[0] != self.base_model.output_shape[-1]:
@@ -42,14 +45,9 @@ class InferenceEngine:
         self.classifier_weights = tf.convert_to_tensor(kernel, dtype=tf.float32)
         self.classifier_bias = tf.convert_to_tensor(self.classifier.bias, dtype=tf.float32) if self.classifier.use_bias else tf.zeros((len(self.labels),), dtype=tf.float32)
 
-        # Render has a tight memory limit. The previous implementation ran the
-        # complete model AND the nested MobileNetV2 backbone for every image.
-        # That duplicated the forward-pass memory and could push the free Render
-        # instance to its limit, causing the HTTP connection to be terminated
-        # before Streamlit received the complete response ("Response ended prematurely").
-        # We now run the real trained backbone once, then execute its exact trained
-        # head (GAP -> BatchNorm -> Dense) from those feature maps. This preserves
-        # the trained model's predictions while using the same feature maps for CAM.
+        # Render has a tight memory limit. Run the real trained backbone once and
+        # execute the exact trained head from those feature maps. The same feature
+        # maps are then reused for Grad-CAM, avoiding a second forward pass.
         dummy = tf.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=tf.float32)
         with _INFERENCE_LOCK, tf.device("/CPU:0"):
             preprocessed = tf.keras.applications.mobilenet_v2.preprocess_input(dummy)
@@ -67,15 +65,15 @@ class InferenceEngine:
                 return layer
         raise RuntimeError("Trained MobileNetV2 backbone was not found in the checkpoint.")
 
-    def _find_layer(self, layer_type):
+    def _find_named_layer(self, class_name: str):
         for layer in self.model.layers:
-            if isinstance(layer, layer_type):
+            if layer.__class__.__name__ == class_name:
                 return layer
-        raise RuntimeError(f"Trained head layer {layer_type.__name__} was not found in the checkpoint.")
+        raise RuntimeError(f"Trained head layer {class_name} was not found in the checkpoint.")
 
     def _find_classifier(self):
         for layer in reversed(self.model.layers):
-            if isinstance(layer, tf.keras.layers.Dense) and layer.units == len(self.labels):
+            if layer.__class__.__name__ == "Dense" and int(layer.units) == len(self.labels):
                 return layer
         raise RuntimeError("Final trained Dense classifier was not found in the checkpoint.")
 
@@ -98,16 +96,13 @@ class InferenceEngine:
             try:
                 original, x = self._preprocess(raw)
                 with tf.device("/CPU:0"):
-                    # Match the exact preprocessing used during PlantVillage
-                    # training, then run the real trained backbone only once.
                     model_input = tf.keras.applications.mobilenet_v2.preprocess_input(x)
                     feature_maps = self.base_model(model_input, training=False)
                     pooled = self.pooling(feature_maps)
                     normalized = self.batch_norm(pooled, training=False)
                     predictions = self.classifier(normalized, training=False)
 
-                class_index = tf.argmax(predictions[0], axis=-1)
-                idx = int(class_index.numpy())
+                idx = int(tf.argmax(predictions[0], axis=-1).numpy())
                 weights = self.classifier_weights[:, idx]
                 cam = tf.reduce_sum(feature_maps[0] * weights[None, None, :], axis=-1)
                 cam = tf.maximum(cam, 0.0)

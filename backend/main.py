@@ -1,13 +1,19 @@
 from __future__ import annotations
-import base64, json, re, time, logging, traceback
+
+import base64
+import json
+import logging
+import re
+import time
+import traceback
 from pathlib import Path
-from fastapi import FastAPI, File, UploadFile, HTTPException
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+
 from backend.inference import InferenceEngine
-from backend.storage import ScanStore
 
 ROOT = Path(__file__).resolve().parents[1]
-DB = ROOT / "backend" / "scans.db"
 TREAT = ROOT / "backend" / "treatments.json"
 METRICS = ROOT / "models" / "metrics.json"
 TREATMENTS = json.loads(TREAT.read_text(encoding="utf-8")) if TREAT.exists() else {}
@@ -15,13 +21,13 @@ engine: InferenceEngine | None = None
 model_error: str | None = None
 model_traceback: str | None = None
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
-store = ScanStore(DB)
 logger = logging.getLogger("cropguard")
 
 
 def advisory_for(label: str):
     def normalize(value: str) -> str:
         return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
     wanted = normalize(label)
     for key, advisory in TREATMENTS.items():
         if normalize(key) == wanted:
@@ -37,23 +43,18 @@ def advisory_for(label: str):
     }
 
 
-def init_db():
-    global store
-    if not store.remote and store.sqlite_path != DB:
-        store = ScanStore(DB)
-    store.initialize()
-
-
-app = FastAPI(title="CropGuard AI", version="1.1.1")
+app = FastAPI(title="CropGuard AI", version="1.1.2")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 @app.on_event("startup")
 def startup():
     global engine, model_error, model_traceback
-    init_db()
     try:
-        engine = InferenceEngine(str(ROOT / "models" / "plantvillage_best.keras"), str(ROOT / "models" / "labels.json"))
+        engine = InferenceEngine(
+            str(ROOT / "models" / "plantvillage_best.keras"),
+            str(ROOT / "models" / "labels.json"),
+        )
         model_error = None
         model_traceback = None
         logger.info("Real prediction model loaded and warmed successfully")
@@ -85,7 +86,7 @@ def metrics():
 
 @app.post("/predict")
 def predict(file: UploadFile = File(...)):
-    """Run genuine TensorFlow inference without making scan persistence a hard dependency."""
+    """Run genuine TensorFlow inference without storing the uploaded scan or result."""
     started = time.perf_counter()
     if engine is None:
         raise HTTPException(503, "Real trained model is not loaded. Check /health for the model error.")
@@ -105,21 +106,6 @@ def predict(file: UploadFile = File(...)):
 
     result["advisory"] = advisory_for(result["label"])
 
-    try:
-        init_db()
-        scan_id = store.insert({**result, "ts": time.time(), "filename": file.filename or "upload"})
-        result["scan_id"] = scan_id
-        if scan_id is None:
-            result["storage_status"] = "skipped_no_gradcam_metrics"
-            result["storage_message"] = "Scan history was not saved because real Grad-CAM metrics are unavailable."
-        else:
-            result["storage_status"] = "saved"
-    except Exception as exc:
-        logger.exception("Optional scan storage failed; returning valid inference result")
-        result["scan_id"] = None
-        result["storage_status"] = "unavailable"
-        result["storage_error"] = str(exc)
-
     heatmap_png = result.pop("heatmap_png", None)
     if heatmap_png is not None:
         result["heatmap_data_url"] = "data:image/png;base64," + base64.b64encode(heatmap_png).decode()
@@ -128,18 +114,10 @@ def predict(file: UploadFile = File(...)):
         result["heatmap_status"] = "Grad-CAM unavailable; prediction returned without heatmap."
 
     logger.info(
-        "Prediction complete: label=%s confidence=%.4f elapsed=%.2fs storage=%s gradcam=%s",
-        result["label"], result["confidence"], time.perf_counter() - started,
-        result["storage_status"], result.get("gradcam_available", False),
+        "Prediction complete: label=%s confidence=%.4f elapsed=%.2fs gradcam=%s",
+        result["label"],
+        result["confidence"],
+        time.perf_counter() - started,
+        result.get("gradcam_available", False),
     )
     return result
-
-
-@app.get("/history")
-def history():
-    try:
-        init_db()
-        return store.history()
-    except Exception as exc:
-        logger.exception("Scan history unavailable")
-        raise HTTPException(503, f"Scan history is unavailable: {exc}") from exc

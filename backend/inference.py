@@ -33,21 +33,31 @@ class InferenceEngine:
             raise RuntimeError(f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels.")
 
         self.base_model = self._find_mobilenet_base()
+        self.pooling = self._find_layer(tf.keras.layers.GlobalAveragePooling2D)
+        self.batch_norm = self._find_layer(tf.keras.layers.BatchNormalization)
         self.classifier = self._find_classifier()
         kernel = self.classifier.kernel
         if kernel.shape[0] != self.base_model.output_shape[-1]:
             raise RuntimeError("Classifier and MobileNetV2 feature dimensions do not match for CAM.")
         self.classifier_weights = tf.convert_to_tensor(kernel, dtype=tf.float32)
+        self.classifier_bias = tf.convert_to_tensor(self.classifier.bias, dtype=tf.float32) if self.classifier.use_bias else tf.zeros((len(self.labels),), dtype=tf.float32)
 
-        # Do not splice the nested MobileNet model into a new Functional graph.
-        # Keras 3 can reject that graph when the saved checkpoint contains nested
-        # symbolic tensors. Instead, run the already-valid trained model and the
-        # already-loaded backbone separately on the same preprocessed image.
+        # Render has a tight memory limit. The previous implementation ran the
+        # complete model AND the nested MobileNetV2 backbone for every image.
+        # That duplicated the forward-pass memory and could push the free Render
+        # instance to its limit, causing the HTTP connection to be terminated
+        # before Streamlit received the complete response ("Response ended prematurely").
+        # We now run the real trained backbone once, then execute its exact trained
+        # head (GAP -> BatchNorm -> Dense) from those feature maps. This preserves
+        # the trained model's predictions while using the same feature maps for CAM.
         dummy = tf.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=tf.float32)
         with _INFERENCE_LOCK, tf.device("/CPU:0"):
-            _ = self.model(dummy, training=False)
-            _ = self.base_model(dummy, training=False)
-        del dummy
+            preprocessed = tf.keras.applications.mobilenet_v2.preprocess_input(dummy)
+            features = self.base_model(preprocessed, training=False)
+            pooled = self.pooling(features)
+            normalized = self.batch_norm(pooled, training=False)
+            _ = self.classifier(normalized, training=False)
+        del dummy, preprocessed, features, pooled, normalized
         gc.collect()
         print(f"[CropGuard] REAL TRAINED MODEL LOADED successfully: {model_path}", flush=True)
 
@@ -56,6 +66,12 @@ class InferenceEngine:
             if isinstance(layer, tf.keras.Model) and "mobilenet" in layer.name.lower():
                 return layer
         raise RuntimeError("Trained MobileNetV2 backbone was not found in the checkpoint.")
+
+    def _find_layer(self, layer_type):
+        for layer in self.model.layers:
+            if isinstance(layer, layer_type):
+                return layer
+        raise RuntimeError(f"Trained head layer {layer_type.__name__} was not found in the checkpoint.")
 
     def _find_classifier(self):
         for layer in reversed(self.model.layers):
@@ -82,8 +98,13 @@ class InferenceEngine:
             try:
                 original, x = self._preprocess(raw)
                 with tf.device("/CPU:0"):
-                    predictions = self.model(x, training=False)
-                    feature_maps = self.base_model(x, training=False)
+                    # Match the exact preprocessing used during PlantVillage
+                    # training, then run the real trained backbone only once.
+                    model_input = tf.keras.applications.mobilenet_v2.preprocess_input(x)
+                    feature_maps = self.base_model(model_input, training=False)
+                    pooled = self.pooling(feature_maps)
+                    normalized = self.batch_norm(pooled, training=False)
+                    predictions = self.classifier(normalized, training=False)
 
                 class_index = tf.argmax(predictions[0], axis=-1)
                 idx = int(class_index.numpy())

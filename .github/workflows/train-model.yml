@@ -81,9 +81,10 @@ jobs:
           TF_NUM_INTEROP_THREADS: '2'
         run: |
           set -euo pipefail
-          # Keep every class represented while bounding CPU training time on GitHub runners.
-          # This is still real PlantVillage data; no predictions or metrics are mocked.
-          python scripts/train.py --epochs 12 --fine-tune-epochs 8 --batch-size 16 --max-per-class 500
+          # Train on up to 500 real PlantVillage images per class instead of the old
+          # 100-per-class/1-epoch checkpoint. This keeps every class represented while
+          # giving the transfer-learning model enough data and fine-tuning time to learn.
+          python scripts/train.py --epochs 10 --fine-tune-epochs 6 --batch-size 16 --max-per-class 500
 
       - name: Verify trained artifacts before evaluation
         run: |
@@ -98,6 +99,7 @@ jobs:
           m=json.loads(p.read_text())
           if m.get('classes') != 38: raise SystemExit(f"Unexpected class count: {m.get('classes')}")
           if not 0 < float(m.get('test_accuracy', 0)) <= 1: raise SystemExit('Invalid test accuracy')
+          if int(m.get('max_per_class', 0)) != 500: raise SystemExit('Training cap mismatch')
           print('Training artifact verified:', m)
           PY
 

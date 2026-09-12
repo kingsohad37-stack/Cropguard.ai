@@ -5,7 +5,6 @@ import io
 import json
 import hashlib
 import threading
-from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageOps
@@ -18,6 +17,7 @@ _INFERENCE_LOCK = threading.Lock()
 
 class InferenceEngine:
     def __init__(self, model_path="models/plantvillage_best.keras", labels_path="models/labels.json"):
+        from pathlib import Path
         model_path = Path(model_path)
         labels_path = Path(labels_path)
         print(f"[CropGuard] REAL checkpoint path: {model_path} exists={model_path.exists()} size={model_path.stat().st_size if model_path.exists() else 0}", flush=True)
@@ -33,29 +33,23 @@ class InferenceEngine:
             raise RuntimeError(f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels.")
 
         self.base_model = self._find_mobilenet_base()
-        self.pooling = self._find_named_layer("GlobalAveragePooling2D")
-        # Keras/TensorFlow can deserialize the saved Keras 3 layer class through a
-        # different Python class object. Match by actual deserialized class name,
-        # not isinstance(), so the real saved BatchNorm is always found.
-        self.batch_norm = self._find_named_layer("BatchNormalization")
-        self.classifier = self._find_classifier()
-        kernel = self.classifier.kernel
-        if kernel.shape[0] != self.base_model.output_shape[-1]:
-            raise RuntimeError("Classifier and MobileNetV2 feature dimensions do not match for CAM.")
-        self.classifier_weights = tf.convert_to_tensor(kernel, dtype=tf.float32)
-        self.classifier_bias = tf.convert_to_tensor(self.classifier.bias, dtype=tf.float32) if self.classifier.use_bias else tf.zeros((len(self.labels),), dtype=tf.float32)
+        # Build a Grad-CAM graph from the ACTUAL saved model. This avoids rebuilding
+        # the trained GAP/BatchNorm/Dense head and guarantees prediction and CAM use
+        # exactly the same weights and preprocessing as the checkpoint.
+        try:
+            self.grad_model = tf.keras.Model(
+                inputs=self.model.inputs,
+                outputs=[self.base_model.output, self.model.output],
+                name="cropguard_grad_model",
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Could not construct Grad-CAM view of the saved model: {exc}") from exc
 
-        # Render has a tight memory limit. Run the real trained backbone once and
-        # execute the exact trained head from those feature maps. The same feature
-        # maps are then reused for Grad-CAM, avoiding a second forward pass.
         dummy = tf.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=tf.float32)
         with _INFERENCE_LOCK, tf.device("/CPU:0"):
-            preprocessed = tf.keras.applications.mobilenet_v2.preprocess_input(dummy)
-            features = self.base_model(preprocessed, training=False)
-            pooled = self.pooling(features)
-            normalized = self.batch_norm(pooled, training=False)
-            _ = self.classifier(normalized, training=False)
-        del dummy, preprocessed, features, pooled, normalized
+            _ = self.model(dummy, training=False)
+            _ = self.grad_model(dummy, training=False)
+        del dummy
         gc.collect()
         print(f"[CropGuard] REAL TRAINED MODEL LOADED successfully: {model_path}", flush=True)
 
@@ -63,19 +57,12 @@ class InferenceEngine:
         for layer in self.model.layers:
             if isinstance(layer, tf.keras.Model) and "mobilenet" in layer.name.lower():
                 return layer
-        raise RuntimeError("Trained MobileNetV2 backbone was not found in the checkpoint.")
-
-    def _find_named_layer(self, class_name: str):
+        # Keras 3 can deserialize nested models with a different Python class
+        # identity, so also accept a class-name match.
         for layer in self.model.layers:
-            if layer.__class__.__name__ == class_name:
+            if "mobilenet" in layer.name.lower() and hasattr(layer, "output"):
                 return layer
-        raise RuntimeError(f"Trained head layer {class_name} was not found in the checkpoint.")
-
-    def _find_classifier(self):
-        for layer in reversed(self.model.layers):
-            if layer.__class__.__name__ == "Dense" and int(layer.units) == len(self.labels):
-                return layer
-        raise RuntimeError("Final trained Dense classifier was not found in the checkpoint.")
+        raise RuntimeError("Trained MobileNetV2 backbone was not found in the checkpoint.")
 
     @staticmethod
     def _preprocess(raw: bytes):
@@ -97,14 +84,18 @@ class InferenceEngine:
                 original, x = self._preprocess(raw)
                 with tf.device("/CPU:0"):
                     model_input = tf.keras.applications.mobilenet_v2.preprocess_input(x)
-                    feature_maps = self.base_model(model_input, training=False)
-                    pooled = self.pooling(feature_maps)
-                    normalized = self.batch_norm(pooled, training=False)
-                    predictions = self.classifier(normalized, training=False)
+                    with tf.GradientTape() as tape:
+                        feature_maps, predictions = self.grad_model(model_input, training=False)
+                        idx_tensor = tf.argmax(predictions[0], axis=-1)
+                        target = predictions[:, idx_tensor]
+                    gradients = tape.gradient(target, feature_maps)
 
-                idx = int(tf.argmax(predictions[0], axis=-1).numpy())
-                weights = self.classifier_weights[:, idx]
-                cam = tf.reduce_sum(feature_maps[0] * weights[None, None, :], axis=-1)
+                if gradients is None:
+                    raise RuntimeError("Grad-CAM gradients were not produced by the real trained model.")
+
+                idx = int(idx_tensor.numpy())
+                pooled_gradients = tf.reduce_mean(gradients, axis=(1, 2))
+                cam = tf.reduce_sum(feature_maps * pooled_gradients[:, None, None, :], axis=-1)[0]
                 cam = tf.maximum(cam, 0.0)
                 max_value = tf.reduce_max(cam)
                 cam = cam / (max_value + tf.keras.backend.epsilon())

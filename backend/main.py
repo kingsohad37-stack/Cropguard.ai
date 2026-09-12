@@ -1,5 +1,5 @@
 from __future__ import annotations
-import base64, json, re, time, logging
+import base64, json, re, time, logging, traceback
 from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +13,7 @@ METRICS = ROOT / "models" / "metrics.json"
 TREATMENTS = json.loads(TREAT.read_text(encoding="utf-8")) if TREAT.exists() else {}
 engine: InferenceEngine | None = None
 model_error: str | None = None
+model_traceback: str | None = None
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 store = ScanStore(DB)
 logger = logging.getLogger("cropguard")
@@ -49,21 +50,28 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 @app.on_event("startup")
 def startup():
-    global engine, model_error
+    global engine, model_error, model_traceback
     init_db()
     try:
         engine = InferenceEngine(str(ROOT / "models" / "plantvillage_best.keras"), str(ROOT / "models" / "labels.json"))
         model_error = None
+        model_traceback = None
         logger.info("Real inference engine loaded and warmed successfully")
     except Exception as exc:
         engine = None
-        model_error = str(exc)
+        model_error = f"{type(exc).__name__}: {exc}"
+        model_traceback = traceback.format_exc()
         logger.exception("Real inference engine failed to load")
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_loaded": engine is not None, "model_error": model_error}
+    return {
+        "status": "ok" if engine is not None else "degraded",
+        "model_loaded": engine is not None,
+        "model_error": model_error,
+        "model_traceback": model_traceback,
+    }
 
 
 @app.get("/metrics")
@@ -95,8 +103,6 @@ def predict(file: UploadFile = File(...)):
 
     result["advisory"] = advisory_for(result["label"])
 
-    # Prediction is valid even if optional scan persistence is temporarily unavailable.
-    # A Supabase 401/5xx must never be misreported to the user as a model failure.
     try:
         init_db()
         result["scan_id"] = store.insert({**result, "ts": time.time(), "filename": file.filename or "upload"})

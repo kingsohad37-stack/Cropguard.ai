@@ -53,22 +53,26 @@ def startup():
     global engine, model_error, model_traceback
     init_db()
     try:
+        # InferenceEngine raises only for failures that prevent genuine model
+        # prediction. Grad-CAM construction is intentionally non-fatal inside it.
         engine = InferenceEngine(str(ROOT / "models" / "plantvillage_best.keras"), str(ROOT / "models" / "labels.json"))
         model_error = None
         model_traceback = None
-        logger.info("Real inference engine loaded and warmed successfully")
+        logger.info("Real prediction model loaded and warmed successfully")
     except Exception as exc:
         engine = None
         model_error = f"{type(exc).__name__}: {exc}"
         model_traceback = traceback.format_exc()
-        logger.exception("Real inference engine failed to load")
+        logger.exception("Real prediction model failed to load")
 
 
 @app.get("/health")
 def health():
+    gradcam_available = bool(engine is not None and engine.grad_model is not None)
     return {
         "status": "ok" if engine is not None else "degraded",
         "model_loaded": engine is not None,
+        "gradcam_available": gradcam_available,
         "model_error": model_error,
         "model_traceback": model_traceback,
     }
@@ -83,7 +87,7 @@ def metrics():
 
 @app.post("/predict")
 def predict(file: UploadFile = File(...)):
-    """Run genuine TensorFlow inference without making scan persistence a hard dependency."""
+    """Run genuine TensorFlow inference without making Grad-CAM or scan persistence a hard dependency."""
     started = time.perf_counter()
     if engine is None:
         raise HTTPException(503, "Real trained model is not loaded. Check /health for the model error.")
@@ -113,10 +117,17 @@ def predict(file: UploadFile = File(...)):
         result["storage_status"] = "unavailable"
         result["storage_error"] = str(exc)
 
-    result["heatmap_data_url"] = "data:image/png;base64," + base64.b64encode(result.pop("heatmap_png")).decode()
+    heatmap_png = result.pop("heatmap_png", None)
+    if heatmap_png is not None:
+        result["heatmap_data_url"] = "data:image/png;base64," + base64.b64encode(heatmap_png).decode()
+    else:
+        result["heatmap_data_url"] = None
+        result["heatmap_status"] = "Grad-CAM unavailable; prediction returned without heatmap."
+
     logger.info(
-        "Prediction complete: label=%s confidence=%.4f elapsed=%.2fs storage=%s",
-        result["label"], result["confidence"], time.perf_counter() - started, result["storage_status"],
+        "Prediction complete: label=%s confidence=%.4f elapsed=%.2fs storage=%s gradcam=%s",
+        result["label"], result["confidence"], time.perf_counter() - started,
+        result["storage_status"], result.get("gradcam_available", False),
     )
     return result
 

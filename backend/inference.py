@@ -29,42 +29,72 @@ class InferenceEngine:
             raise FileNotFoundError(f"LABEL MAP MISSING: {labels_path}")
 
         print(f"[CropGuard] Loading REAL trained checkpoint: {model_path}", flush=True)
-        # Prediction model loading is the critical path. If this succeeds, the
-        # application remains usable even when the optional Grad-CAM view fails.
         self.model = tf.keras.models.load_model(model_path, compile=False)
         self.labels = json.loads(labels_path.read_text())
         if self.model.output_shape[-1] != len(self.labels):
             raise RuntimeError(f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels.")
 
-        # Force Keras to materialize the loaded graph before creating any
-        # auxiliary functional model. This is important for Keras 3 .keras
-        # checkpoints whose symbolic tensors may not be connected until the
-        # loaded model has actually been called.
+        # Materialize the real saved graph before constructing the auxiliary
+        # Grad-CAM view. This does not change the trained model or its weights.
         dummy = tf.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=tf.float32)
         with _INFERENCE_LOCK, tf.device("/CPU:0"):
             _ = self.model(dummy, training=False)
 
         self.grad_model = None
         self.grad_layer_name = None
+        self.head_layers = []
         try:
             self.base_model = self._find_mobilenet_base()
             target_layer = self._find_target_conv_layer(self.base_model)
             self.grad_layer_name = target_layer.name
 
-            # Build the Grad-CAM view from the actual saved graph, by name rather
-            # than relying on a numeric layer index. No trained head is rebuilt.
+            # IMPORTANT: do not take target_layer.output from the nested model
+            # and combine it with the outer model's inputs. Keras 3 treats those
+            # symbolic tensors as belonging to different graphs and raises
+            # "Output with path 0 is not connected to inputs".
+            #
+            # Instead, build the CAM view entirely from the nested MobileNetV2
+            # graph, then reuse the EXACT trained classifier layers from the
+            # saved outer model. No head is recreated and no weights are copied.
             self.grad_model = tf.keras.Model(
-                inputs=self.model.inputs,
-                outputs=[target_layer.output, self.model.output],
-                name="cropguard_grad_model",
+                inputs=self.base_model.input,
+                outputs=[target_layer.output, self.base_model.output],
+                name="cropguard_grad_backbone",
             )
-            # Validate connectivity immediately. If Keras rejects the symbolic
-            # connection, Grad-CAM is disabled but the prediction model remains live.
-            _ = self.grad_model(dummy, training=False)
+
+            base_index = self.model.layers.index(self.base_model)
+            allowed_head_types = (
+                tf.keras.layers.GlobalAveragePooling2D,
+                tf.keras.layers.BatchNormalization,
+                tf.keras.layers.Dropout,
+                tf.keras.layers.Dense,
+            )
+            self.head_layers = [
+                layer for layer in self.model.layers[base_index + 1:]
+                if isinstance(layer, allowed_head_types)
+            ]
+            if not self.head_layers or not isinstance(self.head_layers[-1], tf.keras.layers.Dense):
+                raise RuntimeError("The trained classifier head after MobileNetV2 could not be located.")
+
+            # Validate the CAM graph and the reused trained head on CPU.
+            with tf.device("/CPU:0"):
+                feature_maps, backbone_output = self.grad_model(
+                    tf.keras.applications.mobilenet_v2.preprocess_input(dummy),
+                    training=False,
+                )
+                head_output = backbone_output
+                for layer in self.head_layers:
+                    head_output = layer(head_output, training=False)
+            if tuple(head_output.shape) != tuple(self.model.output_shape):
+                raise RuntimeError(
+                    f"Grad-CAM head output shape {tuple(head_output.shape)} does not match saved model {tuple(self.model.output_shape)}."
+                )
+            del feature_maps, backbone_output, head_output
             print(f"[CropGuard] Grad-CAM enabled using saved layer: {self.grad_layer_name}", flush=True)
         except Exception as exc:
             self.grad_model = None
             self.grad_layer_name = None
+            self.head_layers = []
             logger.warning("Grad-CAM disabled; real prediction model remains available: %s", exc, exc_info=True)
             print(f"[CropGuard] WARNING: Grad-CAM unavailable; prediction model remains usable: {exc}", flush=True)
 
@@ -83,9 +113,6 @@ class InferenceEngine:
 
     @staticmethod
     def _find_target_conv_layer(base_model):
-        # Pick the final convolutional feature layer by its actual Keras name.
-        # MobileNetV2 has BatchNorm/Activation layers after some convolutions, so
-        # the last Conv2D is a stable feature-map target without relying on index.
         conv_layers = [layer for layer in base_model.layers if isinstance(layer, tf.keras.layers.Conv2D)]
         if not conv_layers:
             raise RuntimeError("No Conv2D target layer was found in the MobileNetV2 backbone.")
@@ -111,10 +138,17 @@ class InferenceEngine:
                 original, x = self._preprocess(raw)
                 with tf.device("/CPU:0"):
                     if self.grad_model is not None:
-                        # The saved model already contains MobileNetV2
-                        # preprocess_input, so feed the original 0..255 tensor.
+                        # The saved outer model applies MobileNetV2 preprocessing
+                        # immediately before the nested backbone. Augmentation is
+                        # inactive during inference, so this reproduces the exact
+                        # inference path while keeping the intermediate feature map
+                        # connected to the same nested model graph.
+                        cam_input = tf.keras.applications.mobilenet_v2.preprocess_input(x)
                         with tf.GradientTape() as tape:
-                            feature_maps, predictions = self.grad_model(x, training=False)
+                            feature_maps, backbone_output = self.grad_model(cam_input, training=False)
+                            predictions = backbone_output
+                            for layer in self.head_layers:
+                                predictions = layer(predictions, training=False)
                             idx_tensor = tf.argmax(predictions[0], axis=-1)
                             target = predictions[:, idx_tensor]
                         gradients = tape.gradient(target, feature_maps)
@@ -138,9 +172,6 @@ class InferenceEngine:
                     "image_sha256": hashlib.sha256(raw).hexdigest(),
                 }
 
-                # Grad-CAM is an enhancement, not a prerequisite for genuine
-                # classification. Return a valid prediction if the optional view
-                # or gradients are unavailable.
                 if self.grad_model is not None and gradients is not None:
                     pooled_gradients = tf.reduce_mean(gradients, axis=(1, 2))
                     cam = tf.reduce_sum(feature_maps * pooled_gradients[:, None, None, :], axis=-1)[0]
@@ -167,6 +198,12 @@ class InferenceEngine:
                     result["heatmap_png"] = self._overlay(original, cam_np)
                     result["gradcam_available"] = True
                 else:
+                    # Never fabricate severity or heatmap values. The API returns
+                    # explicit null metrics when the real Grad-CAM graph is not
+                    # available, allowing the UI/storage layer to handle that
+                    # state without turning a valid prediction into a 5xx error.
+                    result["severity_score"] = None
+                    result["heatmap_coverage_percent"] = None
                     result["gradcam_available"] = False
                     result["heatmap_png"] = None
 

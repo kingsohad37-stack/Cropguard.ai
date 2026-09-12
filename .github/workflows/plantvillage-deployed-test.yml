@@ -1,0 +1,123 @@
+name: PlantVillage deployed-model test
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test-deployed-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && pip install datasets requests pillow
+
+      - name: Run PlantVillage test against deployed API
+        env:
+          CROPGUARD_API: https://cropguard-api-ppea.onrender.com/predict
+        run: |
+          python - <<'PY'
+          import csv
+          import io
+          import os
+          import time
+          import requests
+          from datasets import load_dataset
+
+          api = os.environ['CROPGUARD_API']
+          ds = load_dataset('geraldmc/plantvillage-tiny', revision='v0.1.0', split='train')
+
+          # Use only the held-out PlantVillage rows and exactly two images per class.
+          selected = []
+          counts = {}
+          for row in ds:
+              if row['split'] != 'test':
+                  continue
+              cls = row['class_label']
+              if counts.get(cls, 0) >= 2:
+                  continue
+              selected.append(row)
+              counts[cls] = counts.get(cls, 0) + 1
+              if len(counts) == 38 and all(v >= 2 for v in counts.values()):
+                  break
+
+          print(f'Selected {len(selected)} held-out PlantVillage images across {len(counts)} classes')
+          results = []
+          session = requests.Session()
+
+          for i, row in enumerate(selected, 1):
+              expected = row['class_label']
+              image = row['image']
+              buf = io.BytesIO()
+              image.save(buf, format='JPEG')
+              payload = {'file': ('plantvillage.jpg', buf.getvalue(), 'image/jpeg')}
+              started = time.perf_counter()
+              try:
+                  r = session.post(api, files=payload, timeout=90)
+                  elapsed = time.perf_counter() - started
+                  if r.ok:
+                      data = r.json()
+                      predicted = data.get('label', '')
+                      confidence = float(data.get('confidence', 0.0))
+                      gradcam = data.get('gradcam_available', False)
+                      status = 'CORRECT' if predicted == expected else 'WRONG'
+                      error = ''
+                  else:
+                      predicted = ''
+                      confidence = 0.0
+                      gradcam = ''
+                      status = 'HTTP_ERROR'
+                      error = r.text[:300]
+              except Exception as exc:
+                  elapsed = time.perf_counter() - started
+                  predicted = ''
+                  confidence = 0.0
+                  gradcam = ''
+                  status = 'REQUEST_ERROR'
+                  error = repr(exc)
+
+              results.append({
+                  'expected': expected,
+                  'predicted': predicted,
+                  'confidence': round(confidence, 6),
+                  'correct': status == 'CORRECT',
+                  'gradcam_available': gradcam,
+                  'status': status,
+                  'elapsed_seconds': round(elapsed, 3),
+                  'error': error,
+              })
+              print(f'[{i}/{len(selected)}] {status}: {expected} -> {predicted} ({confidence:.3f})')
+
+          with open('plantvillage_results.csv', 'w', newline='', encoding='utf-8') as f:
+              writer = csv.DictWriter(f, fieldnames=results[0].keys())
+              writer.writeheader()
+              writer.writerows(results)
+
+          valid = [x for x in results if x['status'] in ('CORRECT', 'WRONG')]
+          correct = sum(x['correct'] for x in valid)
+          accuracy = correct / len(valid) if valid else 0.0
+          print(f'FINAL: {correct}/{len(valid)} correct = {accuracy:.2%}')
+
+          with open('plantvillage_summary.txt', 'w', encoding='utf-8') as f:
+              f.write(f'images={len(results)}\n')
+              f.write(f'valid_predictions={len(valid)}\n')
+              f.write(f'correct={correct}\n')
+              f.write(f'accuracy={accuracy:.6f}\n')
+              f.write(f'gradcam_available={sum(bool(x["gradcam_available"]) for x in valid)}/{len(valid)}\n')
+          PY
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: cropguard-plantvillage-test
+          path: |
+            plantvillage_results.csv
+            plantvillage_summary.txt

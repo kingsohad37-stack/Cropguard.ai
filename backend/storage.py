@@ -56,13 +56,21 @@ class ScanStore:
             con.commit()
             return int(cur.lastrowid)
 
-    def insert(self, record: dict[str, Any]) -> int | str:
+    def insert(self, record: dict[str, Any]) -> int | str | None:
+        # Severity/coverage are derived from genuine Grad-CAM. Never invent
+        # fallback values merely to satisfy the persistence schema. A valid
+        # classification must still be returned when Grad-CAM is unavailable.
+        severity = record.get("severity_score")
+        coverage = record.get("heatmap_coverage_percent")
+        if severity is None or coverage is None:
+            return None
+
         payload = {
             "filename": record["filename"],
             "label": record["label"],
             "confidence": record["confidence"],
-            "severity_score": record["severity_score"],
-            "heatmap_coverage_percent": record["heatmap_coverage_percent"],
+            "severity_score": severity,
+            "heatmap_coverage_percent": coverage,
             "image_sha256": record["image_sha256"],
         }
         if self.remote:

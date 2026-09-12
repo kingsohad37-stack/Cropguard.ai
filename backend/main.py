@@ -53,8 +53,6 @@ def startup():
     global engine, model_error, model_traceback
     init_db()
     try:
-        # InferenceEngine raises only for failures that prevent genuine model
-        # prediction. Grad-CAM construction is intentionally non-fatal inside it.
         engine = InferenceEngine(str(ROOT / "models" / "plantvillage_best.keras"), str(ROOT / "models" / "labels.json"))
         model_error = None
         model_traceback = None
@@ -87,7 +85,7 @@ def metrics():
 
 @app.post("/predict")
 def predict(file: UploadFile = File(...)):
-    """Run genuine TensorFlow inference without making Grad-CAM or scan persistence a hard dependency."""
+    """Run genuine TensorFlow inference without making scan persistence a hard dependency."""
     started = time.perf_counter()
     if engine is None:
         raise HTTPException(503, "Real trained model is not loaded. Check /health for the model error.")
@@ -109,8 +107,13 @@ def predict(file: UploadFile = File(...)):
 
     try:
         init_db()
-        result["scan_id"] = store.insert({**result, "ts": time.time(), "filename": file.filename or "upload"})
-        result["storage_status"] = "saved"
+        scan_id = store.insert({**result, "ts": time.time(), "filename": file.filename or "upload"})
+        result["scan_id"] = scan_id
+        if scan_id is None:
+            result["storage_status"] = "skipped_no_gradcam_metrics"
+            result["storage_message"] = "Scan history was not saved because real Grad-CAM metrics are unavailable."
+        else:
+            result["storage_status"] = "saved"
     except Exception as exc:
         logger.exception("Optional scan storage failed; returning valid inference result")
         result["scan_id"] = None

@@ -1,6 +1,9 @@
 name: Evaluate existing CropGuard model
 
 on:
+  push:
+    paths:
+      - '.github/workflows/evaluate-model.yml'
   workflow_dispatch:
     inputs:
       run_id:
@@ -10,7 +13,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 jobs:
@@ -38,7 +41,7 @@ jobs:
       - name: Download the completed training artifact
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ inputs.run_id }}
+          RUN_ID: ${{ inputs.run_id || '34695021182' }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/cropguard
@@ -85,3 +88,24 @@ jobs:
         run: |
           cat models/evaluation.json
           cat models/per_class_metrics.csv
+
+      - name: Permanently preserve trained model in GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view cropguard-model-v1 >/dev/null 2>&1; then
+            gh release upload cropguard-model-v1 models/plantvillage_best.keras --clobber
+            gh release upload cropguard-model-v1 models/evaluation.json --clobber
+            gh release upload cropguard-model-v1 models/per_class_metrics.csv --clobber
+            gh release upload cropguard-model-v1 models/training_log.csv --clobber
+          else
+            gh release create cropguard-model-v1 \
+              models/plantvillage_best.keras \
+              models/evaluation.json \
+              models/per_class_metrics.csv \
+              models/training_log.csv \
+              --target main \
+              --title 'CropGuard trained model v1' \
+              --notes 'Permanent preserved artifact from training run 34695021182. Evaluation performed without retraining.'
+          fi

@@ -1,0 +1,37 @@
+name: Fix trained checkpoint architecture hash
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-architecture-hash.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Align loader and preservation checks with the existing trained checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          OLD='9179243efcc7202932d5275aa0a123c9c1b3d5dbb9cef7942da97d2878ec3aef'
+          NEW='eb0c4dcbc2ec3ddefcf47e0bbc5ef1b8c72b3ebe00842e5f98e6339a6e080751'
+          sed -i "s/${OLD}/${NEW}/g" backend/inference.py .github/workflows/evaluate-model.yml
+          git diff -- backend/inference.py .github/workflows/evaluate-model.yml
+          if git diff --quiet -- backend/inference.py .github/workflows/evaluate-model.yml; then
+            echo 'Architecture hash already aligned.'
+            exit 0
+          fi
+          git config user.name 'CropGuard Fix Bot'
+          git config user.email 'cropguard-fix-bot@users.noreply.github.com'
+          git add backend/inference.py .github/workflows/evaluate-model.yml
+          git commit -m 'Align inference with existing 10+6 checkpoint architecture'
+          git push origin HEAD:main

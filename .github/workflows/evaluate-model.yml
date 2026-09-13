@@ -1,0 +1,87 @@
+name: Evaluate existing CropGuard model
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Completed training workflow run containing the model artifact'
+        required: true
+        default: '34695021182'
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y unzip
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install evaluation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install tensorflow==2.18.0 numpy==2.0.2 pandas==2.2.3 pillow==11.1.0 scikit-learn==1.6.1 matplotlib==3.10.0
+
+      - name: Download the completed training artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cropguard
+          curl -L --fail --retry 5 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
+            -o /tmp/cropguard/artifacts.json
+          ARTIFACT_ID=$(python - <<'PY'
+          import json
+          data=json.load(open('/tmp/cropguard/artifacts.json'))
+          matches=[a for a in data.get('artifacts',[]) if a.get('name')=='cropguard-training-results' and not a.get('expired')]
+          if not matches:
+              raise SystemExit('No unexpired cropguard-training-results artifact found for the requested run')
+          print(matches[0]['id'])
+          PY
+          )
+          curl -L --fail --retry 5 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
+            -o /tmp/cropguard/results.zip
+          mkdir -p models
+          unzip -j -q /tmp/cropguard/results.zip -d models
+          test -s models/plantvillage_best.keras
+          echo "Using trained artifact ${ARTIFACT_ID} from workflow run ${RUN_ID}."
+
+      - name: Download the real PlantVillage test data
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/plantvillage
+          curl -L --fail --retry 8 --retry-all-errors --retry-delay 5 -o /tmp/plantvillage/data.zip https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/data.zip
+          curl -L --fail --retry 8 --retry-all-errors --retry-delay 5 -o /tmp/plantvillage/train.txt https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/splits/color_train.txt
+          curl -L --fail --retry 8 --retry-all-errors --retry-delay 5 -o /tmp/plantvillage/test.txt https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/splits/color_test.txt
+          unzip -q /tmp/plantvillage/data.zip -d /tmp/plantvillage/images
+
+      - name: Rebuild the leakage-safe test split
+        run: python scripts/prepare_plantvillage.py --root /tmp/plantvillage/images --train-list /tmp/plantvillage/train.txt --test-list /tmp/plantvillage/test.txt
+
+      - name: Evaluate existing model only
+        run: python scripts/evaluate.py
+
+      - name: Publish evaluation metrics
+        run: |
+          cat models/evaluation.json
+          cat models/per_class_metrics.csv

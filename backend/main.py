@@ -25,8 +25,9 @@ TREATMENTS = json.loads(TREAT.read_text(encoding="utf-8")) if TREAT.exists() els
 engine: InferenceEngine | None = None
 model_error: str | None = None
 model_traceback: str | None = None
-MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_REQUEST_SECONDS = 55.0
+MAX_REQUEST_RSS_MB = float(os.getenv("CROPGUARD_MAX_REQUEST_RSS_MB", "490"))
 logger = logging.getLogger("cropguard")
 
 
@@ -35,6 +36,17 @@ def _memory_mb() -> float:
         return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
     except Exception:
         return -1.0
+
+
+def _current_rss_mb() -> float:
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    return float(line.split()[1]) / 1024.0
+    except Exception:
+        pass
+    return -1.0
 
 
 def _ensure_model():
@@ -112,10 +124,10 @@ async def safety_middleware(request: FastAPIRequest, call_next):
     started = time.perf_counter()
     try:
         response = await call_next(request)
-        logger.info("HTTP %s %s -> %s elapsed=%.3fs rss_max=%.1fMB", request.method, request.url.path, response.status_code, time.perf_counter() - started, _memory_mb())
+        logger.info("HTTP %s %s -> %s elapsed=%.3fs rss_max=%.1fMB current_rss=%.1fMB", request.method, request.url.path, response.status_code, time.perf_counter() - started, _memory_mb(), _current_rss_mb())
         return response
     except Exception as exc:
-        logger.exception("Unhandled API exception: %s %s elapsed=%.3fs rss_max=%.1fMB", request.method, request.url.path, time.perf_counter() - started, _memory_mb())
+        logger.exception("Unhandled API exception: %s %s elapsed=%.3fs rss_max=%.1fMB current_rss=%.1fMB", request.method, request.url.path, time.perf_counter() - started, _memory_mb(), _current_rss_mb())
         return JSONResponse(status_code=500, content={"error": "CropGuard backend failed safely instead of crashing.", "detail": f"{type(exc).__name__}: {exc}", "path": request.url.path})
 
 
@@ -129,7 +141,7 @@ def startup():
         engine = InferenceEngine(str(MODEL), str(ROOT / "models" / "labels.json"))
         model_error = None
         model_traceback = None
-        logger.info("Real prediction model loaded and warmed successfully; startup=%.2fs rss_max=%.1fMB gradcam=%s", time.perf_counter() - startup_started, _memory_mb(), bool(getattr(engine, "gradcam_available", False)))
+        logger.info("Real prediction model loaded and warmed successfully; startup=%.2fs rss_max=%.1fMB current_rss=%.1fMB gradcam=%s", time.perf_counter() - startup_started, _memory_mb(), _current_rss_mb(), bool(getattr(engine, "gradcam_available", False)))
     except Exception as exc:
         engine = None
         model_error = f"{type(exc).__name__}: {exc}"
@@ -139,12 +151,12 @@ def startup():
 
 @app.get("/health")
 def health():
-    return {"status": "ok" if engine is not None else "degraded", "model_loaded": engine is not None, "gradcam_available": bool(engine is not None and getattr(engine, "gradcam_available", False)), "model_error": model_error, "memory_rss_max_mb": round(_memory_mb(), 1)}
+    return {"status": "ok" if engine is not None else "degraded", "model_loaded": engine is not None, "gradcam_available": bool(engine is not None and getattr(engine, "gradcam_available", False)), "model_error": model_error, "memory_rss_max_mb": round(_memory_mb(), 1), "memory_rss_current_mb": round(_current_rss_mb(), 1)}
 
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "alive", "memory_rss_max_mb": round(_memory_mb(), 1)}
+    return {"status": "alive", "memory_rss_max_mb": round(_memory_mb(), 1), "memory_rss_current_mb": round(_current_rss_mb(), 1)}
 
 
 @app.get("/metrics")
@@ -160,20 +172,29 @@ def predict(file: UploadFile = File(...)):
     if engine is None:
         detail = model_error or "unknown model startup error"
         raise HTTPException(503, f"Real trained model is not ready: {detail}. Retry after /health reports model_loaded=true.")
+    current_rss = _current_rss_mb()
+    if current_rss > MAX_REQUEST_RSS_MB:
+        logger.warning("Rejecting prediction for memory headroom: current_rss=%.1fMB limit=%.1fMB", current_rss, MAX_REQUEST_RSS_MB)
+        raise HTTPException(503, "Inference service is temporarily low on memory headroom. Please retry in a moment.")
     raw = file.file.read(MAX_UPLOAD_BYTES + 1)
     if not raw:
         raise HTTPException(400, "Empty image")
     if len(raw) > MAX_UPLOAD_BYTES:
-        raise HTTPException(413, "Image is too large (maximum upload size is 15 MB).")
-    logger.info("Starting real prediction: filename=%s bytes=%d rss_max=%.1fMB", file.filename or "upload", len(raw), _memory_mb())
+        raise HTTPException(413, "Image is too large (maximum upload size is 8 MB).")
+    logger.info("Starting real prediction: filename=%s bytes=%d current_rss=%.1fMB rss_max=%.1fMB", file.filename or "upload", len(raw), _current_rss_mb(), _memory_mb())
     try:
         result = engine.predict(raw)
     except MemoryError as exc:
-        logger.exception("Inference hit Python memory exhaustion; rss_max=%.1fMB", _memory_mb())
+        logger.exception("Inference hit Python memory exhaustion; rss_max=%.1fMB current_rss=%.1fMB", _memory_mb(), _current_rss_mb())
         raise HTTPException(503, "Inference ran out of memory. The model is still loaded; please retry with a smaller image.") from exc
     except Exception as exc:
-        logger.exception("Real inference failed; rss_max=%.1fMB", _memory_mb())
+        logger.exception("Real inference failed; rss_max=%.1fMB current_rss=%.1fMB", _memory_mb(), _current_rss_mb())
         raise HTTPException(422, f"Inference failed safely: {type(exc).__name__}: {exc}") from exc
+    finally:
+        try:
+            file.file.close()
+        except Exception:
+            pass
     elapsed = time.perf_counter() - started
     if elapsed >= MAX_REQUEST_SECONDS:
         logger.warning("Prediction exceeded safety budget: %.2fs", elapsed)

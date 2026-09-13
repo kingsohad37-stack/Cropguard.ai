@@ -28,15 +28,21 @@ logger = logging.getLogger("cropguard")
 
 
 def _ensure_model():
-    """Fetch the already-trained model into the deployment image when it is absent."""
-    if MODEL.exists() and MODEL.stat().st_size > 20_000_000:
+    """Use the committed trained checkpoint; only download it as a fallback if absent."""
+    if MODEL.exists() and MODEL.stat().st_size > 1_000_000:
+        logger.info("Using committed REAL trained model: %s (%d bytes)", MODEL, MODEL.stat().st_size)
         return
+
     url = os.getenv("CROPGUARD_MODEL_URL", "").strip()
     if not url:
-        raise FileNotFoundError(f"REAL MODEL MISSING: {MODEL}. CROPGUARD_MODEL_URL is not configured.")
+        raise FileNotFoundError(
+            f"REAL MODEL MISSING: {MODEL}. No valid checkpoint is present in the deployment image "
+            "and CROPGUARD_MODEL_URL is not configured."
+        )
+
     MODEL.parent.mkdir(parents=True, exist_ok=True)
     tmp = MODEL.with_suffix(".keras.download")
-    logger.info("Downloading existing trained CropGuard model for deployment")
+    logger.info("Committed model missing; downloading existing trained CropGuard model as fallback")
     req = Request(url, headers={"User-Agent": "CropGuard/1.0"})
     with urlopen(req, timeout=180) as response, tmp.open("wb") as out:
         while True:
@@ -44,7 +50,7 @@ def _ensure_model():
             if not chunk:
                 break
             out.write(chunk)
-    if tmp.stat().st_size <= 20_000_000:
+    if tmp.stat().st_size <= 1_000_000:
         tmp.unlink(missing_ok=True)
         raise RuntimeError("Downloaded model is unexpectedly small or incomplete.")
     tmp.replace(MODEL)
@@ -114,7 +120,8 @@ def predict(file: UploadFile = File(...)):
     """Run genuine TensorFlow inference without storing the uploaded scan or result."""
     started = time.perf_counter()
     if engine is None:
-        raise HTTPException(503, "Real trained model is not loaded. Check /health for the model error.")
+        detail = model_error or "unknown model startup error"
+        raise HTTPException(503, f"Real trained model is not loaded: {detail}. Check /health for details.")
 
     raw = file.file.read()
     if not raw:

@@ -5,15 +5,28 @@ import hashlib
 import io
 import json
 import logging
+import os
 import threading
 import zipfile
 from pathlib import Path
+
+# Set CPU/runtime limits before TensorFlow is imported.
+# These settings reduce thread-pool overhead on Render without changing the trained model.
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+os.environ.setdefault("TF_NUM_INTRAOP_THREADS", "1")
+os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 import numpy as np
 from PIL import Image, ImageOps
 import tensorflow as tf
 
 # Keep TensorFlow's CPU worker pools small on Render's memory-constrained instance.
-# This changes runtime resource usage only; the trained checkpoint and inference graph are unchanged.
 try:
     tf.config.threading.set_intra_op_parallelism_threads(1)
     tf.config.threading.set_inter_op_parallelism_threads(1)
@@ -22,6 +35,7 @@ except RuntimeError:
 
 IMG_SIZE = (224, 224)
 MAX_VISUAL_SIZE = (512, 512)
+GRADCAM_RSS_LIMIT_MB = float(os.getenv("CROPGUARD_GRADCAM_RSS_LIMIT_MB", "440"))
 _INFERENCE_LOCK = threading.Lock()
 logger = logging.getLogger("cropguard.inference")
 MODEL_VERSION = "cropguard-plantvillage-mobilenetv2-v1"
@@ -29,6 +43,18 @@ TRAINING_SCRIPT_COMMIT = "7a570daddc44f27525ec9030756035e9129b6d29"
 # This is the architecture hash of the existing 10+6 trained checkpoint.
 # Do not retrain or replace the checkpoint.
 EXPECTED_ARCHITECTURE_HASH = "9179243efcc7202932d5275aa0a123c9c1b3d5dbb9cef7942da97d2878ec3aef"
+
+
+def _rss_mb() -> float:
+    """Return current process RSS when Linux procfs is available."""
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    return float(line.split()[1]) / 1024.0
+    except Exception:
+        pass
+    return -1.0
 
 
 def _architecture_hash(model: tf.keras.Model) -> str:
@@ -81,7 +107,7 @@ class InferenceEngine:
         del dummy, features, pooled, normalized
         gc.collect()
         self.gradcam_available = True
-        print("[CropGuard] Gradient-based Grad-CAM enabled on single backbone pass", flush=True)
+        print(f"[CropGuard] Gradient-based Grad-CAM enabled; current_rss={_rss_mb():.1f}MB", flush=True)
         print(f"[CropGuard] REAL TRAINED MODEL LOADED successfully: {model_path}", flush=True)
 
     @staticmethod
@@ -116,12 +142,15 @@ class InferenceEngine:
         except Exception as exc: raise ValueError("Upload is not a valid decodable image.") from exc
         original.thumbnail(MAX_VISUAL_SIZE, Image.Resampling.LANCZOS)
         resized = original.resize(IMG_SIZE, Image.Resampling.BILINEAR)
-        return original, tf.convert_to_tensor(np.asarray(resized, dtype=np.float32)[None, ...], dtype=tf.float32)
+        tensor = tf.convert_to_tensor(np.asarray(resized, dtype=np.float32)[None, ...], dtype=tf.float32)
+        del resized
+        return original, tensor
 
     def predict(self, raw: bytes) -> dict:
         with _INFERENCE_LOCK:
             try:
-                original, x = self._preprocess(raw); model_input = tf.keras.applications.mobilenet_v2.preprocess_input(x)
+                original, x = self._preprocess(raw)
+                model_input = tf.keras.applications.mobilenet_v2.preprocess_input(x)
                 with tf.device("/CPU:0"):
                     with tf.GradientTape() as tape:
                         feature_maps = self.base_model(model_input, training=False); tape.watch(feature_maps)
@@ -139,15 +168,27 @@ class InferenceEngine:
             finally:
                 gc.collect()
 
+            # Free the large model-input tensor graph before optional visualization.
+            del model_input, x
+            gc.collect()
+
             # Grad-CAM is optional visualization. A failure here must never discard
             # the successful model prediction or prevent the advisory from rendering.
+            if 0 < _rss_mb() >= GRADCAM_RSS_LIMIT_MB:
+                logger.warning("Skipping Grad-CAM at current_rss=%.1fMB (limit=%.1fMB)", _rss_mb(), GRADCAM_RSS_LIMIT_MB)
+                result["gradcam_available"] = False
+                result["gradcam_error"] = "Grad-CAM visualization is unavailable for this result."
+                del gradients, feature_maps, predictions, normalized, pooled, target, idx_tensor
+                gc.collect()
+                return result
+
             try:
                 pooled_gradients = tf.reduce_mean(gradients, axis=(1,2))
                 cam = tf.reduce_sum(feature_maps * pooled_gradients[:,None,None,:], axis=-1)[0]
                 cam = tf.maximum(cam, 0.0)
                 cam = cam / (tf.reduce_max(cam) + tf.keras.backend.epsilon())
                 cam_np = cam.numpy().astype(np.float32)
-                del gradients, feature_maps, pooled_gradients, cam, predictions, normalized, pooled, target, idx_tensor, model_input, x
+                del gradients, feature_maps, pooled_gradients, cam, predictions, normalized, pooled, target, idx_tensor
                 gc.collect()
                 heat = Image.fromarray(np.uint8(cam_np*255), mode="L").resize(original.size, Image.Resampling.BILINEAR)
                 heat_np = np.asarray(heat, dtype=np.float32)/255.0
@@ -162,6 +203,8 @@ class InferenceEngine:
                 result["heatmap_coverage_percent"]=float(np.mean(leaf_values>=0.50)*100.0)
                 result["heatmap_png"]=self._overlay(original,cam_np)
                 result["gradcam_available"]=True
+                del heat, heat_np, rgb, mx, mn, sat, green, leaf_mask, leaf_values, cam_np
+                gc.collect()
             except Exception as exc:
                 logger.warning("Grad-CAM unavailable for prediction %s: %s", result.get("label"), exc)
                 result["gradcam_available"]=False

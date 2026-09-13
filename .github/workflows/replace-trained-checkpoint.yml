@@ -21,7 +21,7 @@ jobs:
           mkdir -p /tmp/artifact
           gh run download 34695021182 --repo "${{ github.repository }}" --name cropguard-training-results --dir /tmp/artifact
           test -f /tmp/artifact/plantvillage_best.keras
-      - name: Verify exact trained checkpoint and push to main
+      - name: Verify and replace checkpoint on current main
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -33,22 +33,17 @@ jobs:
           with zipfile.ZipFile(p) as z:
               cfg=json.loads(z.read('config.json'))
           names=[(x.get('name'),x.get('class_name')) for x in cfg['config']['layers']]
-          required=[
-              ('global_average_pooling2d','GlobalAveragePooling2D'),
-              ('batch_normalization','BatchNormalization'),
-              ('dropout','Dropout'),
-              ('predictions','Dense'),
-          ]
+          required=[('global_average_pooling2d','GlobalAveragePooling2D'),('batch_normalization','BatchNormalization'),('dropout','Dropout'),('predictions','Dense')]
           for item in required:
               assert item in names, item
-          arch=json.dumps(cfg['config']['layers'], sort_keys=True, separators=(',',':')).encode()
           print('verified_size', size)
           print('sha256', hashlib.sha256(p.read_bytes()).hexdigest())
-          print('verified_top_level_layers', required)
           PY
+          git fetch origin main
+          git checkout -B checkpoint-replace origin/main
           cp /tmp/artifact/plantvillage_best.keras models/plantvillage_best.keras
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add models/plantvillage_best.keras
           git commit -m 'Replace stale checkpoint with verified 10+6 trained artifact'
-          git push origin HEAD:main
+          git push origin HEAD:main --force-with-lease=refs/heads/main:$(git rev-parse origin/main)

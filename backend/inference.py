@@ -1,11 +1,13 @@
-"""Real inference and optional class activation maps for the trained PlantVillage MobileNetV2 model."""
+"""Real inference and gradient-based class activation maps for the trained PlantVillage MobileNetV2 model."""
 from __future__ import annotations
+
 import gc
+import hashlib
 import io
 import json
-import hashlib
 import logging
 import threading
+from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageOps
@@ -19,10 +21,13 @@ logger = logging.getLogger("cropguard.inference")
 
 class InferenceEngine:
     def __init__(self, model_path="models/plantvillage_best.keras", labels_path="models/labels.json"):
-        from pathlib import Path
         model_path = Path(model_path)
         labels_path = Path(labels_path)
-        print(f"[CropGuard] REAL checkpoint path: {model_path} exists={model_path.exists()} size={model_path.stat().st_size if model_path.exists() else 0}", flush=True)
+        print(
+            f"[CropGuard] REAL checkpoint path: {model_path} exists={model_path.exists()} "
+            f"size={model_path.stat().st_size if model_path.exists() else 0}",
+            flush=True,
+        )
         if not model_path.exists():
             raise FileNotFoundError(f"REAL MODEL MISSING: {model_path}. Run the real data pipeline and training first.")
         if not labels_path.exists():
@@ -34,87 +39,50 @@ class InferenceEngine:
         if self.model.output_shape[-1] != len(self.labels):
             raise RuntimeError(f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels.")
 
+        self.base_model = self._find_mobilenet_base()
+        self.pooling = self._find_layer(tf.keras.layers.GlobalAveragePooling2D)
+        self.batch_norm = self._find_layer(tf.keras.layers.BatchNormalization)
+        self.classifier = self._find_classifier()
+
+        if self.classifier.kernel.shape[0] != self.base_model.output_shape[-1]:
+            raise RuntimeError("Classifier and MobileNetV2 feature dimensions do not match for Grad-CAM.")
+
+        # Important for Render Free: keep exactly one MobileNetV2 forward pass.
+        # The saved outer model and a second Grad-CAM graph used to coexist and
+        # push the 512 MiB instance over its limit. Grad-CAM only needs gradients
+        # of the trained classifier score with respect to the backbone feature
+        # maps, so we can compute those gradients directly from the single saved
+        # backbone output and the exact trained head.
         dummy = tf.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=tf.float32)
         with _INFERENCE_LOCK, tf.device("/CPU:0"):
-            _ = self.model(dummy, training=False)
-
-        self.grad_model = None
-        self.grad_layer_name = None
-        self.head_layers = []
-        try:
-            self.base_model = self._find_mobilenet_base()
-            target_layer = self._find_target_conv_layer(self.base_model)
-            self.grad_layer_name = target_layer.name
-
-            # Keep the Grad-CAM graph inside the saved nested MobileNetV2 graph.
-            # The classifier layers below are the exact trained layers from the
-            # saved outer model; no model is reloaded and no weights are copied.
-            self.grad_model = tf.keras.Model(
-                inputs=self.base_model.input,
-                outputs=[target_layer.output, self.base_model.output],
-                name="cropguard_grad_backbone",
-            )
-
-            base_index = self.model.layers.index(self.base_model)
-            allowed_head_types = (
-                tf.keras.layers.GlobalAveragePooling2D,
-                tf.keras.layers.BatchNormalization,
-                tf.keras.layers.Dropout,
-                tf.keras.layers.Dense,
-            )
-            self.head_layers = [
-                layer for layer in self.model.layers[base_index + 1:]
-                if isinstance(layer, allowed_head_types)
-            ]
-            if not self.head_layers or not isinstance(self.head_layers[-1], tf.keras.layers.Dense):
-                raise RuntimeError("The trained classifier head after MobileNetV2 could not be located.")
-
-            with tf.device("/CPU:0"):
-                feature_maps, backbone_output = self.grad_model(
-                    tf.keras.applications.mobilenet_v2.preprocess_input(dummy),
-                    training=False,
-                )
-                head_output = backbone_output
-                for layer in self.head_layers:
-                    head_output = layer(head_output, training=False)
-
-            # Keras may represent the saved batch dimension as None while a
-            # concrete warm-up tensor has batch size 1. Compare the semantic
-            # output width instead of incorrectly rejecting (1, 38) vs (None, 38).
-            saved_width = int(self.model.output_shape[-1])
-            cam_width = int(head_output.shape[-1])
-            if cam_width != saved_width:
-                raise RuntimeError(
-                    f"Grad-CAM head output width {cam_width} does not match saved model width {saved_width}."
-                )
-            del feature_maps, backbone_output, head_output
-            print(f"[CropGuard] Grad-CAM enabled using saved layer: {self.grad_layer_name}", flush=True)
-        except Exception as exc:
-            self.grad_model = None
-            self.grad_layer_name = None
-            self.head_layers = []
-            logger.warning("Grad-CAM disabled; real prediction model remains available: %s", exc, exc_info=True)
-            print(f"[CropGuard] WARNING: Grad-CAM unavailable; prediction model remains usable: {exc}", flush=True)
-
-        del dummy
+            preprocessed = tf.keras.applications.mobilenet_v2.preprocess_input(dummy)
+            features = self.base_model(preprocessed, training=False)
+            pooled = self.pooling(features)
+            normalized = self.batch_norm(pooled, training=False)
+            _ = self.classifier(normalized, training=False)
+        del dummy, preprocessed, features, pooled, normalized
         gc.collect()
+        print("[CropGuard] Gradient-based Grad-CAM enabled on single backbone pass", flush=True)
         print(f"[CropGuard] REAL TRAINED MODEL LOADED successfully: {model_path}", flush=True)
 
     def _find_mobilenet_base(self):
         for layer in self.model.layers:
             if isinstance(layer, tf.keras.Model) and "mobilenet" in layer.name.lower():
                 return layer
-        for layer in self.model.layers:
-            if "mobilenet" in layer.name.lower() and hasattr(layer, "layers"):
-                return layer
         raise RuntimeError("Trained MobileNetV2 backbone was not found in the checkpoint.")
 
     @staticmethod
-    def _find_target_conv_layer(base_model):
-        conv_layers = [layer for layer in base_model.layers if isinstance(layer, tf.keras.layers.Conv2D)]
-        if not conv_layers:
-            raise RuntimeError("No Conv2D target layer was found in the MobileNetV2 backbone.")
-        return conv_layers[-1]
+    def _find_layer(layer_type):
+        for layer in InferenceEngine._current_layers:
+            if isinstance(layer, layer_type):
+                return layer
+        raise RuntimeError(f"Trained head layer {layer_type.__name__} was not found in the checkpoint.")
+
+    def _find_classifier(self):
+        for layer in reversed(self.model.layers):
+            if isinstance(layer, tf.keras.layers.Dense) and layer.units == len(self.labels):
+                return layer
+        raise RuntimeError("Final trained Dense classifier was not found in the checkpoint.")
 
     @staticmethod
     def _preprocess(raw: bytes):
@@ -134,22 +102,21 @@ class InferenceEngine:
         with _INFERENCE_LOCK:
             try:
                 original, x = self._preprocess(raw)
+                model_input = tf.keras.applications.mobilenet_v2.preprocess_input(x)
+
                 with tf.device("/CPU:0"):
-                    if self.grad_model is not None:
-                        cam_input = tf.keras.applications.mobilenet_v2.preprocess_input(x)
-                        with tf.GradientTape() as tape:
-                            feature_maps, backbone_output = self.grad_model(cam_input, training=False)
-                            predictions = backbone_output
-                            for layer in self.head_layers:
-                                predictions = layer(predictions, training=False)
-                            idx_tensor = tf.argmax(predictions[0], axis=-1)
-                            target = predictions[:, idx_tensor]
-                        gradients = tape.gradient(target, feature_maps)
-                    else:
-                        predictions = self.model(x, training=False)
+                    # One real trained backbone pass. Tape watches only its
+                    # output feature maps, so gradients are taken for the exact
+                    # trained classifier score without building a duplicate graph.
+                    with tf.GradientTape() as tape:
+                        feature_maps = self.base_model(model_input, training=False)
+                        tape.watch(feature_maps)
+                        pooled = self.pooling(feature_maps)
+                        normalized = self.batch_norm(pooled, training=False)
+                        predictions = self.classifier(normalized, training=False)
                         idx_tensor = tf.argmax(predictions[0], axis=-1)
-                        feature_maps = None
-                        gradients = None
+                        target = predictions[:, idx_tensor]
+                    gradients = tape.gradient(target, feature_maps)
 
                 idx = int(idx_tensor.numpy())
                 vector = predictions[0].numpy()
@@ -161,41 +128,42 @@ class InferenceEngine:
                     "disease": self._split_label(self.labels[idx])[1],
                     "class_index": idx,
                     "confidence": float(predictions[0, idx].numpy()),
-                    "top_predictions": [{"label": self.labels[int(i)], "probability": float(vector[int(i)])} for i in top_indices],
+                    "top_predictions": [
+                        {"label": self.labels[int(i)], "probability": float(vector[int(i)])}
+                        for i in top_indices
+                    ],
                     "image_sha256": hashlib.sha256(raw).hexdigest(),
                 }
 
-                if self.grad_model is not None and gradients is not None:
-                    pooled_gradients = tf.reduce_mean(gradients, axis=(1, 2))
-                    cam = tf.reduce_sum(feature_maps * pooled_gradients[:, None, None, :], axis=-1)[0]
-                    cam = tf.maximum(cam, 0.0)
-                    max_value = tf.reduce_max(cam)
-                    cam = cam / (max_value + tf.keras.backend.epsilon())
-                    cam_np = cam.numpy().astype(np.float32)
+                pooled_gradients = tf.reduce_mean(gradients, axis=(1, 2))
+                cam = tf.reduce_sum(
+                    feature_maps * pooled_gradients[:, None, None, :], axis=-1
+                )[0]
+                cam = tf.maximum(cam, 0.0)
+                max_value = tf.reduce_max(cam)
+                cam = cam / (max_value + tf.keras.backend.epsilon())
+                cam_np = cam.numpy().astype(np.float32)
 
-                    heat = Image.fromarray(np.uint8(cam_np * 255), mode="L").resize(original.size, Image.Resampling.BILINEAR)
-                    heat_np = np.asarray(heat, dtype=np.float32) / 255.0
-                    rgb = np.asarray(original).astype(np.float32) / 255.0
-                    mx = rgb.max(axis=2)
-                    mn = rgb.min(axis=2)
-                    sat = (mx - mn) / (mx + 1e-6)
-                    green = (rgb[..., 1] > rgb[..., 0] * 0.72) & (rgb[..., 1] > rgb[..., 2] * 0.72)
-                    leaf_mask = (green | (sat > 0.18)) & (mx < 0.97)
-                    if leaf_mask.mean() < 0.01:
-                        leaf_mask = mx < 0.97
-                    if leaf_mask.mean() < 0.01:
-                        leaf_mask = np.ones(leaf_mask.shape, dtype=bool)
-                    leaf_values = heat_np[leaf_mask]
-                    result["severity_score"] = float(np.mean(leaf_values) * 100.0)
-                    result["heatmap_coverage_percent"] = float(np.mean(leaf_values >= 0.50) * 100.0)
-                    result["heatmap_png"] = self._overlay(original, cam_np)
-                    result["gradcam_available"] = True
-                else:
-                    result["severity_score"] = None
-                    result["heatmap_coverage_percent"] = None
-                    result["gradcam_available"] = False
-                    result["heatmap_png"] = None
+                heat = Image.fromarray(np.uint8(cam_np * 255), mode="L").resize(
+                    original.size, Image.Resampling.BILINEAR
+                )
+                heat_np = np.asarray(heat, dtype=np.float32) / 255.0
+                rgb = np.asarray(original).astype(np.float32) / 255.0
+                mx = rgb.max(axis=2)
+                mn = rgb.min(axis=2)
+                sat = (mx - mn) / (mx + 1e-6)
+                green = (rgb[..., 1] > rgb[..., 0] * 0.72) & (rgb[..., 1] > rgb[..., 2] * 0.72)
+                leaf_mask = (green | (sat > 0.18)) & (mx < 0.97)
+                if leaf_mask.mean() < 0.01:
+                    leaf_mask = mx < 0.97
+                if leaf_mask.mean() < 0.01:
+                    leaf_mask = np.ones(leaf_mask.shape, dtype=bool)
+                leaf_values = heat_np[leaf_mask]
 
+                result["severity_score"] = float(np.mean(leaf_values) * 100.0)
+                result["heatmap_coverage_percent"] = float(np.mean(leaf_values >= 0.50) * 100.0)
+                result["heatmap_png"] = self._overlay(original, cam_np)
+                result["gradcam_available"] = True
                 return result
             finally:
                 gc.collect()
@@ -221,3 +189,7 @@ class InferenceEngine:
         buf = io.BytesIO()
         out.save(buf, format="PNG", optimize=True)
         return buf.getvalue()
+
+
+# Used only while locating the saved classifier head; populated per engine init.
+InferenceEngine._current_layers = []

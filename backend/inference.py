@@ -47,12 +47,9 @@ class InferenceEngine:
         if self.classifier.kernel.shape[0] != self.base_model.output_shape[-1]:
             raise RuntimeError("Classifier and MobileNetV2 feature dimensions do not match for Grad-CAM.")
 
-        # Important for Render Free: keep exactly one MobileNetV2 forward pass.
-        # The saved outer model and a second Grad-CAM graph used to coexist and
-        # push the 512 MiB instance over its limit. Grad-CAM only needs gradients
-        # of the trained classifier score with respect to the backbone feature
-        # maps, so we can compute those gradients directly from the single saved
-        # backbone output and the exact trained head.
+        # Keep exactly one MobileNetV2 forward pass. Grad-CAM gradients are
+        # computed directly from the saved backbone feature maps and the exact
+        # trained classifier head, avoiding a duplicate Grad-CAM graph.
         dummy = tf.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=tf.float32)
         with _INFERENCE_LOCK, tf.device("/CPU:0"):
             preprocessed = tf.keras.applications.mobilenet_v2.preprocess_input(dummy)
@@ -71,9 +68,8 @@ class InferenceEngine:
                 return layer
         raise RuntimeError("Trained MobileNetV2 backbone was not found in the checkpoint.")
 
-    @staticmethod
-    def _find_layer(layer_type):
-        for layer in InferenceEngine._current_layers:
+    def _find_layer(self, layer_type):
+        for layer in self.model.layers:
             if isinstance(layer, layer_type):
                 return layer
         raise RuntimeError(f"Trained head layer {layer_type.__name__} was not found in the checkpoint.")
@@ -105,9 +101,6 @@ class InferenceEngine:
                 model_input = tf.keras.applications.mobilenet_v2.preprocess_input(x)
 
                 with tf.device("/CPU:0"):
-                    # One real trained backbone pass. Tape watches only its
-                    # output feature maps, so gradients are taken for the exact
-                    # trained classifier score without building a duplicate graph.
                     with tf.GradientTape() as tape:
                         feature_maps = self.base_model(model_input, training=False)
                         tape.watch(feature_maps)
@@ -136,9 +129,7 @@ class InferenceEngine:
                 }
 
                 pooled_gradients = tf.reduce_mean(gradients, axis=(1, 2))
-                cam = tf.reduce_sum(
-                    feature_maps * pooled_gradients[:, None, None, :], axis=-1
-                )[0]
+                cam = tf.reduce_sum(feature_maps * pooled_gradients[:, None, None, :], axis=-1)[0]
                 cam = tf.maximum(cam, 0.0)
                 max_value = tf.reduce_max(cam)
                 cam = cam / (max_value + tf.keras.backend.epsilon())
@@ -189,7 +180,3 @@ class InferenceEngine:
         buf = io.BytesIO()
         out.save(buf, format="PNG", optimize=True)
         return buf.getvalue()
-
-
-# Used only while locating the saved classifier head; populated per engine init.
-InferenceEngine._current_layers = []

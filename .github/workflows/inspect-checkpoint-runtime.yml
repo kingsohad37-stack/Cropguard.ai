@@ -1,0 +1,35 @@
+name: Inspect checkpoint runtime architecture
+on:
+  push:
+    branches: [temp-model-replace]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp-model-replace
+      - name: Download completed training artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/artifact
+          gh run download 34695021182 --repo "${{ github.repository }}" --name cropguard-training-results --dir /tmp/artifact
+      - name: Inspect with TensorFlow 2.18
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet tensorflow==2.18.0
+          python - <<'PY'
+          import hashlib, json, tensorflow as tf
+          p='/tmp/artifact/plantvillage_best.keras'
+          model=tf.keras.models.load_model(p, compile=False)
+          sig=[{'name': layer.name, 'class': layer.__class__.__name__} for layer in model.layers]
+          h=hashlib.sha256(json.dumps(sig,separators=(',',':'),sort_keys=True).encode()).hexdigest()
+          print('TF_VERSION', tf.__version__)
+          print('RUNTIME_ARCHITECTURE_HASH', h)
+          print('LAYERS', json.dumps(sig))
+          PY

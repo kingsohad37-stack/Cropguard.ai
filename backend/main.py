@@ -64,10 +64,18 @@ def _ensure_model():
 def advisory_for(label: str):
     def normalize(value: str) -> str:
         return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
     wanted = normalize(label)
+    # PlantVillage labels use Crop___Disease, while the advisory database stores
+    # the disease key without the crop prefix. Match both forms so the real
+    # class-specific treatment card is restored without changing inference.
+    disease_part = label.split("___", 1)[-1] if "___" in label else label
+    disease_wanted = normalize(disease_part)
     for key, advisory in TREATMENTS.items():
-        if normalize(key) == wanted:
+        normalized_key = normalize(key)
+        if normalized_key == wanted or normalized_key == disease_wanted:
             return advisory
+
     return {"summary": "No class-specific advisory is available in the reference database.", "actions": ["Inspect additional leaves and the surrounding crop area.", "Use integrated pest/disease management and avoid unnecessary pesticide applications.", "Follow only locally registered product labels and agricultural-extension recommendations."], "sources": []}
 
 

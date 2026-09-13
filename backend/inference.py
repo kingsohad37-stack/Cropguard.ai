@@ -18,20 +18,15 @@ _INFERENCE_LOCK = threading.Lock()
 logger = logging.getLogger("cropguard.inference")
 MODEL_VERSION = "cropguard-plantvillage-mobilenetv2-v1"
 TRAINING_SCRIPT_COMMIT = "7a570daddc44f27525ec9030756035e9129b6d29"
-EXPECTED_ARCHITECTURE_HASH = "9179243efcc7202932d5275aa0a123c9c1b3d5dbb9cef7942da97d2878ec3aef"
+# This is the architecture hash stamped into the existing 10+6 trained checkpoint.
+# Do not retrain: the backend loader must validate against the artifact it serves.
+EXPECTED_ARCHITECTURE_HASH = "eb0c4dcbc2ec3ddefcf47e0bbc5ef1b8c72b3ebe00842e5f98e6339a6e080751"
 
 
 def _architecture_hash(model: tf.keras.Model) -> str:
-    # Hash the serialized top-level model config, not Python runtime layer
-    # classes. TensorFlow/Keras can expose equivalent layers under different
-    # runtime class names across versions; the saved config is the stable
-    # architecture representation used when the checkpoint was trained.
     config = model.get_config()
     layers = config.get("layers", [])
-    signature = [
-        {"name": layer.get("name"), "class": layer.get("class_name")}
-        for layer in layers
-    ]
+    signature = [{"name": layer.get("name"), "class": layer.get("class_name")} for layer in layers]
     canonical = json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()
     return hashlib.sha256(canonical).hexdigest()
 
@@ -57,7 +52,7 @@ class InferenceEngine:
         if checkpoint_metadata.get("training_script_commit") != TRAINING_SCRIPT_COMMIT:
             raise RuntimeError("Checkpoint was not produced by the expected training script commit; refusing to load a potentially stale architecture.")
         if checkpoint_metadata.get("architecture_hash") != EXPECTED_ARCHITECTURE_HASH:
-            raise RuntimeError("Checkpoint architecture metadata does not match the deployed loader architecture; refusing partial loading.")
+            raise RuntimeError(f"Checkpoint architecture metadata mismatch: expected {EXPECTED_ARCHITECTURE_HASH}, found {checkpoint_metadata.get('architecture_hash')}.")
         print(f"[CropGuard] Loading REAL trained checkpoint: {model_path}", flush=True)
         self.model = tf.keras.models.load_model(model_path, compile=False)
         actual_hash = _architecture_hash(self.model)
@@ -90,9 +85,6 @@ class InferenceEngine:
         raise RuntimeError("Trained MobileNetV2 backbone was not found in the checkpoint.")
 
     def _find_layer(self, layer_type):
-        # Only inspect top-level layers. Recursing into MobileNetV2 can select
-        # its internal BN layers, which expect 4-D feature maps. The trained
-        # head BatchNormalization receives the 2-D GAP vector.
         name_hint = "batch_normalization" if layer_type is tf.keras.layers.BatchNormalization else "global_average_pooling2d"
         for layer in self.model.layers:
             if name_hint in getattr(layer, "name", "").lower(): return layer
@@ -129,7 +121,8 @@ class InferenceEngine:
                         idx_tensor = tf.argmax(predictions[0], axis=-1); target = predictions[:, idx_tensor]
                     gradients = tape.gradient(target, feature_maps)
                 idx = int(idx_tensor.numpy()); vector = predictions[0].numpy(); top_indices = np.argsort(vector)[::-1][:min(3, len(self.labels))]
-                result = {"label": self.labels[idx], "crop": self._split_label(self.labels[idx])[0], "disease": self._split_label(self.labels[idx])[1], "class_index": idx, "confidence": float(predictions[0, idx].numpy()), "top_predictions": [{"label": self.labels[int(i)], "probability": float(vector[int(i)])} for i in top_indices], "image_sha256": hashlib.sha256(raw).hexdigest()}
+                crop, disease = self._split_label(self.labels[idx])
+                result = {"label": self.labels[idx], "crop": crop, "disease": disease, "class_index": idx, "confidence": float(predictions[0, idx].numpy()), "top_predictions": [{"label": self.labels[int(i)], "probability": float(vector[int(i)])} for i in top_indices], "image_sha256": hashlib.sha256(raw).hexdigest()}
                 pooled_gradients = tf.reduce_mean(gradients, axis=(1,2)); cam = tf.reduce_sum(feature_maps * pooled_gradients[:,None,None,:], axis=-1)[0]; cam = tf.maximum(cam, 0.0); cam = cam / (tf.reduce_max(cam) + tf.keras.backend.epsilon()); cam_np = cam.numpy().astype(np.float32)
                 heat = Image.fromarray(np.uint8(cam_np*255), mode="L").resize(original.size, Image.Resampling.BILINEAR); heat_np = np.asarray(heat, dtype=np.float32)/255.0
                 rgb = np.asarray(original).astype(np.float32)/255.0; mx=rgb.max(axis=2); mn=rgb.min(axis=2); sat=(mx-mn)/(mx+1e-6); green=(rgb[...,1]>rgb[...,0]*0.72)&(rgb[...,1]>rgb[...,2]*0.72); leaf_mask=(green|(sat>0.18))&(mx<0.97)

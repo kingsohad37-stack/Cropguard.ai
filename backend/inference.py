@@ -12,6 +12,14 @@ import numpy as np
 from PIL import Image, ImageOps
 import tensorflow as tf
 
+# Keep TensorFlow's CPU worker pools small on Render's memory-constrained instance.
+# This changes runtime resource usage only; the trained checkpoint and inference graph are unchanged.
+try:
+    tf.config.threading.set_intra_op_parallelism_threads(1)
+    tf.config.threading.set_inter_op_parallelism_threads(1)
+except RuntimeError:
+    pass
+
 IMG_SIZE = (224, 224)
 MAX_VISUAL_SIZE = (512, 512)
 _INFERENCE_LOCK = threading.Lock()
@@ -125,6 +133,9 @@ class InferenceEngine:
                 crop, disease = self._split_label(self.labels[idx])
                 result = {"label": self.labels[idx], "crop": crop, "disease": disease, "class_index": idx, "confidence": float(predictions[0, idx].numpy()), "top_predictions": [{"label": self.labels[int(i)], "probability": float(vector[int(i)])} for i in top_indices], "image_sha256": hashlib.sha256(raw).hexdigest()}
                 pooled_gradients = tf.reduce_mean(gradients, axis=(1,2)); cam = tf.reduce_sum(feature_maps * pooled_gradients[:,None,None,:], axis=-1)[0]; cam = tf.maximum(cam, 0.0); cam = cam / (tf.reduce_max(cam) + tf.keras.backend.epsilon()); cam_np = cam.numpy().astype(np.float32)
+                # Release gradient-tape intermediates before building the visual overlay.
+                del gradients, feature_maps, pooled_gradients, cam, predictions, normalized, pooled, target, idx_tensor, model_input, x
+                gc.collect()
                 heat = Image.fromarray(np.uint8(cam_np*255), mode="L").resize(original.size, Image.Resampling.BILINEAR); heat_np = np.asarray(heat, dtype=np.float32)/255.0
                 rgb = np.asarray(original).astype(np.float32)/255.0; mx=rgb.max(axis=2); mn=rgb.min(axis=2); sat=(mx-mn)/(mx+1e-6); green=(rgb[...,1]>rgb[...,0]*0.72)&(rgb[...,1]>rgb[...,2]*0.72); leaf_mask=(green|(sat>0.18))&(mx<0.97)
                 if leaf_mask.mean()<0.01: leaf_mask=mx<0.97

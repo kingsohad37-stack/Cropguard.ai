@@ -62,21 +62,53 @@ class InferenceEngine:
         print("[CropGuard] Gradient-based Grad-CAM enabled on single backbone pass", flush=True)
         print(f"[CropGuard] REAL TRAINED MODEL LOADED successfully: {model_path}", flush=True)
 
+    @staticmethod
+    def _class_matches(layer, expected_type):
+        """Match Keras layers robustly across tf.keras/Keras 3 deserialization."""
+        return (
+            isinstance(layer, expected_type)
+            or layer.__class__.__name__ == expected_type.__name__
+            or layer.__class__.__name__.lower() == expected_type.__name__.lower()
+        )
+
     def _find_mobilenet_base(self):
         for layer in self.model.layers:
             if isinstance(layer, tf.keras.Model) and "mobilenet" in layer.name.lower():
                 return layer
+        # Keras 3 can deserialize nested Functional models through a different
+        # class identity. The saved checkpoint still exposes the same layer name.
+        for layer in self.model.layers:
+            if "mobilenet" in getattr(layer, "name", "").lower():
+                return layer
         raise RuntimeError("Trained MobileNetV2 backbone was not found in the checkpoint.")
 
     def _find_layer(self, layer_type):
+        # The trained head is top-level in the saved checkpoint. Prefer that
+        # exact layer before searching nested MobileNetV2 internals, because
+        # MobileNetV2 itself contains many BatchNormalization layers.
         for layer in self.model.layers:
-            if isinstance(layer, layer_type):
+            if self._class_matches(layer, layer_type):
                 return layer
+
+        # Fallback for Keras serialization variants where the head layer is
+        # exposed through a nested container.
+        def walk(container):
+            for layer in getattr(container, "layers", []):
+                if self._class_matches(layer, layer_type):
+                    return layer
+                found = walk(layer)
+                if found is not None:
+                    return found
+            return None
+
+        found = walk(self.model)
+        if found is not None:
+            return found
         raise RuntimeError(f"Trained head layer {layer_type.__name__} was not found in the checkpoint.")
 
     def _find_classifier(self):
         for layer in reversed(self.model.layers):
-            if isinstance(layer, tf.keras.layers.Dense) and layer.units == len(self.labels):
+            if self._class_matches(layer, tf.keras.layers.Dense) and layer.units == len(self.labels):
                 return layer
         raise RuntimeError("Final trained Dense classifier was not found in the checkpoint.")
 

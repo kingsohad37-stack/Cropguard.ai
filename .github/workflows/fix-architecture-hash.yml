@@ -35,3 +35,6 @@ jobs:
           git add backend/inference.py .github/workflows/evaluate-model.yml
           git commit -m 'Align inference with existing 10+6 checkpoint architecture'
           git push origin HEAD:main
+
+      - name: Completed without retraining
+        run: echo 'Only inference/evaluation validation was changed; training was not started.'

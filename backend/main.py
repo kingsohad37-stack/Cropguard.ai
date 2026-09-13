@@ -70,9 +70,26 @@ def _normalize_treatment_key(value: str) -> str:
 
 
 def advisory_for(label: str) -> dict:
+    """Return only an exact crop+disease treatment or a clearly labeled generic fallback."""
     wanted = _normalize_treatment_key(label)
+    candidates = {wanted}
+
+    if "___" in label:
+        crop_raw, disease_raw = label.split("___", 1)
+    else:
+        pieces = label.split("_", 1)
+        crop_raw = pieces[0]
+        disease_raw = pieces[1] if len(pieces) == 2 else ""
+
+    crop = _normalize_treatment_key(crop_raw)
+    disease = _normalize_treatment_key(disease_raw)
+    if crop and disease:
+        if disease.startswith(f"{crop}_"):
+            disease = disease[len(crop) + 1 :]
+        candidates.add(f"{crop}_{disease}")
+
     for key, advisory in TREATMENTS.items():
-        if _normalize_treatment_key(key) == wanted:
+        if _normalize_treatment_key(key) in candidates:
             return advisory
 
     return {

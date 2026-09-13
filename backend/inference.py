@@ -22,9 +22,15 @@ EXPECTED_ARCHITECTURE_HASH = "9179243efcc7202932d5275aa0a123c9c1b3d5dbb9cef7942d
 
 
 def _architecture_hash(model: tf.keras.Model) -> str:
+    # Hash the serialized top-level model config, not Python runtime layer
+    # classes. TensorFlow/Keras can expose equivalent layers under different
+    # runtime class names across versions; the saved config is the stable
+    # architecture representation used when the checkpoint was trained.
+    config = model.get_config()
+    layers = config.get("layers", [])
     signature = [
-        {"name": layer.name, "class": layer.__class__.__name__}
-        for layer in model.layers
+        {"name": layer.get("name"), "class": layer.get("class_name")}
+        for layer in layers
     ]
     canonical = json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()
     return hashlib.sha256(canonical).hexdigest()

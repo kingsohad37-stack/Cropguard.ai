@@ -23,8 +23,18 @@ services:
         value: "1"
       - key: OMP_NUM_THREADS
         value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: NUMEXPR_NUM_THREADS
+        value: "1"
+      - key: WEB_CONCURRENCY
+        value: "1"
       - key: MALLOC_ARENA_MAX
         value: "2"
+      - key: CROPGUARD_GRADCAM_RSS_LIMIT_MB
+        value: "440"
   - type: web
     name: cropguard-dashboard
     runtime: python

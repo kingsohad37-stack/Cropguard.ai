@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import threading
+import zipfile
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
@@ -15,6 +16,28 @@ IMG_SIZE = (224, 224)
 MAX_VISUAL_SIZE = (512, 512)
 _INFERENCE_LOCK = threading.Lock()
 logger = logging.getLogger("cropguard.inference")
+MODEL_VERSION = "cropguard-plantvillage-mobilenetv2-v1"
+TRAINING_SCRIPT_COMMIT = "7a570daddc44f27525ec9030756035e9129b6d29"
+EXPECTED_ARCHITECTURE_HASH = "9179243efcc7202932d5275aa0a123c9c1b3d5dbb9cef7942da97d2878ec3aef"
+
+
+def _architecture_hash(model: tf.keras.Model) -> str:
+    signature = [
+        {"name": layer.name, "class": layer.__class__.__name__}
+        for layer in model.layers
+    ]
+    canonical = json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _checkpoint_metadata(model_path: Path) -> dict:
+    try:
+        with zipfile.ZipFile(model_path, "r") as archive:
+            metadata = json.loads(archive.read("metadata.json"))
+    except Exception as exc:
+        raise RuntimeError(f"Checkpoint metadata could not be read: {type(exc).__name__}: {exc}") from exc
+    return metadata
+
 
 class InferenceEngine:
     def __init__(self, model_path="models/plantvillage_best.keras", labels_path="models/labels.json"):
@@ -22,8 +45,18 @@ class InferenceEngine:
         print(f"[CropGuard] REAL checkpoint path: {model_path} exists={model_path.exists()} size={model_path.stat().st_size if model_path.exists() else 0}", flush=True)
         if not model_path.exists(): raise FileNotFoundError(f"REAL MODEL MISSING: {model_path}. Run the real data pipeline and training first.")
         if not labels_path.exists(): raise FileNotFoundError(f"LABEL MAP MISSING: {labels_path}")
+        checkpoint_metadata = _checkpoint_metadata(model_path)
+        if checkpoint_metadata.get("model_version") != MODEL_VERSION:
+            raise RuntimeError(f"Checkpoint model_version mismatch: expected {MODEL_VERSION!r}, found {checkpoint_metadata.get('model_version')!r}.")
+        if checkpoint_metadata.get("training_script_commit") != TRAINING_SCRIPT_COMMIT:
+            raise RuntimeError("Checkpoint was not produced by the expected training script commit; refusing to load a potentially stale architecture.")
+        if checkpoint_metadata.get("architecture_hash") != EXPECTED_ARCHITECTURE_HASH:
+            raise RuntimeError("Checkpoint architecture metadata does not match the deployed loader architecture; refusing partial loading.")
         print(f"[CropGuard] Loading REAL trained checkpoint: {model_path}", flush=True)
         self.model = tf.keras.models.load_model(model_path, compile=False)
+        actual_hash = _architecture_hash(self.model)
+        if actual_hash != EXPECTED_ARCHITECTURE_HASH:
+            raise RuntimeError(f"Checkpoint architecture hash mismatch: expected {EXPECTED_ARCHITECTURE_HASH}, found {actual_hash}.")
         self.labels = json.loads(labels_path.read_text())
         if self.model.output_shape[-1] != len(self.labels): raise RuntimeError(f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels.")
         self.base_model = self._find_mobilenet_base()
@@ -37,6 +70,7 @@ class InferenceEngine:
             pooled = self.pooling(features); normalized = self.batch_norm(pooled, training=False); _ = self.classifier(normalized, training=False)
         del dummy, features, pooled, normalized
         gc.collect()
+        self.gradcam_available = True
         print("[CropGuard] Gradient-based Grad-CAM enabled on single backbone pass", flush=True)
         print(f"[CropGuard] REAL TRAINED MODEL LOADED successfully: {model_path}", flush=True)
 
@@ -50,9 +84,9 @@ class InferenceEngine:
         raise RuntimeError("Trained MobileNetV2 backbone was not found in the checkpoint.")
 
     def _find_layer(self, layer_type):
-        # IMPORTANT: only inspect top-level layers. Recursing into MobileNetV2
-        # can select its internal bn_Conv1, which expects a 4-D tensor. The
-        # trained head BatchNormalization receives the 2-D GAP vector.
+        # Only inspect top-level layers. Recursing into MobileNetV2 can select
+        # its internal BN layers, which expect 4-D feature maps. The trained
+        # head BatchNormalization receives the 2-D GAP vector.
         name_hint = "batch_normalization" if layer_type is tf.keras.layers.BatchNormalization else "global_average_pooling2d"
         for layer in self.model.layers:
             if name_hint in getattr(layer, "name", "").lower(): return layer

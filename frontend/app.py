@@ -192,21 +192,23 @@ if source is not None and image_bytes is not None:
                     st.table([{"class": p["label"], "probability": f"{p['probability'] * 100:.2f}%"} for p in data["top_predictions"]])
                     advisory = data.get("advisory") or {}
 
-# Always show the disease-fix card when an analysis succeeds.
-# Display-only change: inference/model/training/API behavior is untouched.
-with st.container(border=True):
-    st.markdown("### 🩺 Disease fix & treatment")
-    summary = advisory.get("summary") or "Follow the recommended disease-management steps below."
-    st.markdown(f"**What to do:** {summary}")
-    actions = advisory.get("actions") or []
-    if actions:
-        for action in actions:
-            st.markdown(f"- {action}")
-    else:
-        st.info("No class-specific treatment steps are available for this result.")
-    for source_link in advisory.get("sources", []):
-        st.caption(source_link)
+                    # Always show the disease-fix card when an analysis succeeds.
+                    # Display-only change: inference/model/training/API behavior is untouched.
+                    with st.container(border=True):
+                        st.markdown("### 🩺 Disease fix & treatment")
+                        summary = advisory.get("summary") or "Follow the recommended disease-management steps below."
+                        st.markdown(f"**What to do:** {summary}")
+                        actions = advisory.get("actions") or []
+                        if actions:
+                            for action in actions:
+                                st.markdown(f"- {action}")
+                        else:
+                            st.info("No class-specific treatment steps are available for this result.")
+                        for source_link in advisory.get("sources", []):
+                            st.caption(source_link)
 
+            except requests.RequestException as exc:
+                st.error(f"Analysis request failed: {exc}")
 st.divider()
 st.subheader("Model evidence")
 try:

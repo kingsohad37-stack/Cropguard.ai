@@ -1,4 +1,4 @@
-name: Evaluate existing CropGuard model
+name: Preserve trained CropGuard model
 
 on:
   push:
@@ -17,34 +17,17 @@ permissions:
   actions: read
 
 jobs:
-  evaluate:
+  preserve-model:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y unzip
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: pip
-
-      - name: Install evaluation dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install tensorflow==2.18.0 numpy==2.0.2 pandas==2.2.3 pillow==11.1.0 scikit-learn==1.6.1 matplotlib==3.10.0
-
-      - name: Download the completed training artifact
+      - name: Download completed training artifact
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run_id || '34695021182' }}
         run: |
           set -euo pipefail
-          mkdir -p /tmp/cropguard
+          mkdir -p /tmp/cropguard models
           curl -L --fail --retry 5 \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
@@ -64,48 +47,23 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
             -o /tmp/cropguard/results.zip
-          mkdir -p models
           unzip -j -q /tmp/cropguard/results.zip -d models
           test -s models/plantvillage_best.keras
-          echo "Using trained artifact ${ARTIFACT_ID} from workflow run ${RUN_ID}."
+          echo "Preserving trained model from run ${RUN_ID}, artifact ${ARTIFACT_ID}."
 
-      - name: Download the real PlantVillage test data
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/plantvillage
-          curl -L --fail --retry 8 --retry-all-errors --retry-delay 5 -o /tmp/plantvillage/data.zip https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/data.zip
-          curl -L --fail --retry 8 --retry-all-errors --retry-delay 5 -o /tmp/plantvillage/train.txt https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/splits/color_train.txt
-          curl -L --fail --retry 8 --retry-all-errors --retry-delay 5 -o /tmp/plantvillage/test.txt https://huggingface.co/datasets/mohanty/PlantVillage/resolve/main/splits/color_test.txt
-          unzip -q /tmp/plantvillage/data.zip -d /tmp/plantvillage/images
-
-      - name: Rebuild the leakage-safe test split
-        run: python scripts/prepare_plantvillage.py --root /tmp/plantvillage/images --train-list /tmp/plantvillage/train.txt --test-list /tmp/plantvillage/test.txt
-
-      - name: Evaluate existing model only
-        run: python scripts/evaluate.py
-
-      - name: Publish evaluation metrics
-        run: |
-          cat models/evaluation.json
-          cat models/per_class_metrics.csv
-
-      - name: Permanently preserve trained model in GitHub Release
+      - name: Publish model as permanent release asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if gh release view cropguard-model-v1 >/dev/null 2>&1; then
             gh release upload cropguard-model-v1 models/plantvillage_best.keras --clobber
-            gh release upload cropguard-model-v1 models/evaluation.json --clobber
-            gh release upload cropguard-model-v1 models/per_class_metrics.csv --clobber
-            gh release upload cropguard-model-v1 models/training_log.csv --clobber
+            gh release upload cropguard-model-v1 models/training_log.csv --clobber || true
           else
             gh release create cropguard-model-v1 \
               models/plantvillage_best.keras \
-              models/evaluation.json \
-              models/per_class_metrics.csv \
               models/training_log.csv \
               --target main \
               --title 'CropGuard trained model v1' \
-              --notes 'Permanent preserved artifact from training run 34695021182. Evaluation performed without retraining.'
+              --notes 'Permanent trained model from workflow run 34695021182. Evaluation intentionally skipped; no retraining performed.'
           fi

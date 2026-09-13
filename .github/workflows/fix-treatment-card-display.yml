@@ -1,0 +1,44 @@
+name: Fix treatment card display
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'Apply treatment card display fix'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch treatment card only
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('frontend/app.py')
+          s = p.read_text(encoding='utf-8')
+          old = '''                    advisory = data.get("advisory") or {}\n\n                    # Always show the disease-fix card when an analysis succeeds.\n                    # Display-only change: inference/model/training/API behavior is untouched.\n                    with st.container(border=True):\n                        st.markdown("### 🩺 Disease fix & treatment")\n                        summary = advisory.get("summary") or "Follow the recommended disease-management steps below."\n                        st.markdown(f"**What to do:** {summary}")\n                        actions = advisory.get("actions") or []\n                        if actions:\n                            for action in actions:\n                                st.markdown(f"- {action}")\n                        else:\n                            st.info("No class-specific treatment steps are available for this result.")\n                        for source_link in advisory.get("sources", []):\n                            st.caption(source_link)\n'''
+          new = '''                    # Treatment/advisory display is intentionally independent of the\n                    # glass container styling. This guarantees the card renders on\n                    # Streamlit mobile/desktop while leaving inference untouched.\n                    advisory = data.get("advisory")\n                    if not isinstance(advisory, dict):\n                        advisory = {}\n                    st.markdown("### 🩺 Disease fix & treatment")\n                    summary = advisory.get("summary") or "Follow the recommended disease-management steps below."\n                    st.markdown(f"**What to do:** {summary}")\n                    actions = advisory.get("actions")\n                    if isinstance(actions, list) and actions:\n                        for action in actions:\n                            st.markdown(f"- {action}")\n                    else:\n                        st.info("No class-specific treatment steps are available for this result.")\n                    sources = advisory.get("sources")\n                    if isinstance(sources, list):\n                        for source_link in sources:\n                            st.caption(str(source_link))\n'''
+          if old not in s:
+              raise SystemExit('Expected treatment-card block was not found; refusing to modify anything.')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
+          python -m py_compile frontend/app.py
+      - name: Commit only frontend display fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/app.py
+          git diff --cached -- frontend/app.py
+          git commit -m 'Apply treatment card display fix'
+          git push
+      - name: Remove temporary workflow
+        if: always()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -f .github/workflows/fix-treatment-card-display.yml || true
+          git commit -m 'Remove temporary treatment card workflow' || true
+          git push || true

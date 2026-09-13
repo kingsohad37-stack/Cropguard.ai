@@ -1,4 +1,4 @@
-name: Preserve trained CropGuard model
+name: Preserve and verify trained CropGuard model
 
 on:
   push:
@@ -21,6 +21,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download completed training artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -50,6 +55,72 @@ jobs:
           unzip -j -q /tmp/cropguard/results.zip -d models
           test -s models/plantvillage_best.keras
           echo "Preserving trained model from run ${RUN_ID}, artifact ${ARTIFACT_ID}."
+
+      - name: Verify checkpoint architecture and stamp metadata
+        env:
+          RUN_ID: ${{ inputs.run_id || '34695021182' }}
+          TRAINING_COMMIT: '7a570daddc44f27525ec9030756035e9129b6d29'
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, zipfile
+          from pathlib import Path
+
+          path = Path('models/plantvillage_best.keras')
+          expected_version = 'cropguard-plantvillage-mobilenetv2-v1'
+          expected_training_commit = '7a570daddc44f27525ec9030756035e9129b6d29'
+          with zipfile.ZipFile(path) as z:
+              config = json.loads(z.read('config.json'))['config']
+              metadata = json.loads(z.read('metadata.json'))
+          signature = [{'name': l['name'], 'class': l['class_name']} for l in config['layers']]
+          architecture_hash = hashlib.sha256(json.dumps(signature, separators=(',', ':'), sort_keys=True).encode()).hexdigest()
+          expected_hash = '9179243efcc7202932d5275aa0a123c9c1b3d5dbb9cef7942da97d2878ec3aef'
+          if architecture_hash != expected_hash:
+              raise SystemExit(f'Architecture mismatch: got {architecture_hash}, expected {expected_hash}')
+          required_head = [('global_average_pooling2d','GlobalAveragePooling2D'), ('batch_normalization','BatchNormalization'), ('dropout','Dropout'), ('predictions','Dense')]
+          if [(l['name'], l['class_name']) for l in config['layers'][-4:]] != required_head:
+              raise SystemExit('Trained head does not match GAP -> BatchNormalization -> Dropout -> Dense(38).')
+          metadata.update({
+              'model_version': expected_version,
+              'architecture_hash': architecture_hash,
+              'training_script_commit': expected_training_commit,
+              'training_workflow_run_id': '${{ inputs.run_id || '34695021182' }}',
+              'source_artifact': 'cropguard-training-results',
+              'checkpoint_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+          })
+          tmp = Path('/tmp/model.keras')
+          with zipfile.ZipFile(path, 'r') as zin, zipfile.ZipFile(tmp, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
+              for info in zin.infolist():
+                  data = zin.read(info.filename)
+                  if info.filename == 'metadata.json':
+                      data = json.dumps(metadata, separators=(',', ':')).encode()
+                  zout.writestr(info, data)
+          tmp.replace(path)
+          print(json.dumps({'model_version': expected_version, 'architecture_hash': architecture_hash, 'training_script_commit': expected_training_commit}, indent=2))
+          PY
+
+      - name: Verify the stamped checkpoint can be opened
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, zipfile
+          p='models/plantvillage_best.keras'
+          with zipfile.ZipFile(p) as z:
+              json.loads(z.read('config.json'))
+              metadata=json.loads(z.read('metadata.json'))
+              assert metadata['model_version']=='cropguard-plantvillage-mobilenetv2-v1'
+              assert metadata['training_script_commit']=='7a570daddc44f27525ec9030756035e9129b6d29'
+          print('Checkpoint package verification passed:', p)
+          PY
+
+      - name: Commit the exact trained checkpoint to main
+        run: |
+          set -euo pipefail
+          git config user.name 'CropGuard Model Bot'
+          git config user.email 'cropguard-model-bot@users.noreply.github.com'
+          git add models/plantvillage_best.keras
+          git commit -m 'Replace stale checkpoint with trained PlantVillage model' || exit 0
+          git push origin HEAD:main
 
       - name: Publish model as permanent release asset
         env:

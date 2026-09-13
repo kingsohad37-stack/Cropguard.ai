@@ -132,17 +132,44 @@ class InferenceEngine:
                 idx = int(idx_tensor.numpy()); vector = predictions[0].numpy(); top_indices = np.argsort(vector)[::-1][:min(3, len(self.labels))]
                 crop, disease = self._split_label(self.labels[idx])
                 result = {"label": self.labels[idx], "crop": crop, "disease": disease, "class_index": idx, "confidence": float(predictions[0, idx].numpy()), "top_predictions": [{"label": self.labels[int(i)], "probability": float(vector[int(i)])} for i in top_indices], "image_sha256": hashlib.sha256(raw).hexdigest()}
-                pooled_gradients = tf.reduce_mean(gradients, axis=(1,2)); cam = tf.reduce_sum(feature_maps * pooled_gradients[:,None,None,:], axis=-1)[0]; cam = tf.maximum(cam, 0.0); cam = cam / (tf.reduce_max(cam) + tf.keras.backend.epsilon()); cam_np = cam.numpy().astype(np.float32)
-                # Release gradient-tape intermediates before building the visual overlay.
+            except MemoryError:
+                raise
+            except Exception:
+                raise
+            finally:
+                gc.collect()
+
+            # Grad-CAM is optional visualization. A failure here must never discard
+            # the successful model prediction or prevent the advisory from rendering.
+            try:
+                pooled_gradients = tf.reduce_mean(gradients, axis=(1,2))
+                cam = tf.reduce_sum(feature_maps * pooled_gradients[:,None,None,:], axis=-1)[0]
+                cam = tf.maximum(cam, 0.0)
+                cam = cam / (tf.reduce_max(cam) + tf.keras.backend.epsilon())
+                cam_np = cam.numpy().astype(np.float32)
                 del gradients, feature_maps, pooled_gradients, cam, predictions, normalized, pooled, target, idx_tensor, model_input, x
                 gc.collect()
-                heat = Image.fromarray(np.uint8(cam_np*255), mode="L").resize(original.size, Image.Resampling.BILINEAR); heat_np = np.asarray(heat, dtype=np.float32)/255.0
-                rgb = np.asarray(original).astype(np.float32)/255.0; mx=rgb.max(axis=2); mn=rgb.min(axis=2); sat=(mx-mn)/(mx+1e-6); green=(rgb[...,1]>rgb[...,0]*0.72)&(rgb[...,1]>rgb[...,2]*0.72); leaf_mask=(green|(sat>0.18))&(mx<0.97)
+                heat = Image.fromarray(np.uint8(cam_np*255), mode="L").resize(original.size, Image.Resampling.BILINEAR)
+                heat_np = np.asarray(heat, dtype=np.float32)/255.0
+                rgb = np.asarray(original).astype(np.float32)/255.0
+                mx=rgb.max(axis=2); mn=rgb.min(axis=2); sat=(mx-mn)/(mx+1e-6)
+                green=(rgb[...,1]>rgb[...,0]*0.72)&(rgb[...,1]>rgb[...,2]*0.72)
+                leaf_mask=(green|(sat>0.18))&(mx<0.97)
                 if leaf_mask.mean()<0.01: leaf_mask=mx<0.97
                 if leaf_mask.mean()<0.01: leaf_mask=np.ones(leaf_mask.shape,dtype=bool)
-                leaf_values=heat_np[leaf_mask]; result["severity_score"]=float(np.mean(leaf_values)*100.0); result["heatmap_coverage_percent"]=float(np.mean(leaf_values>=0.50)*100.0); result["heatmap_png"]=self._overlay(original,cam_np); result["gradcam_available"]=True
-                return result
-            finally: gc.collect()
+                leaf_values=heat_np[leaf_mask]
+                result["severity_score"]=float(np.mean(leaf_values)*100.0)
+                result["heatmap_coverage_percent"]=float(np.mean(leaf_values>=0.50)*100.0)
+                result["heatmap_png"]=self._overlay(original,cam_np)
+                result["gradcam_available"]=True
+            except Exception as exc:
+                logger.warning("Grad-CAM unavailable for prediction %s: %s", result.get("label"), exc)
+                result["gradcam_available"]=False
+                result["gradcam_error"]="Grad-CAM visualization is unavailable for this result."
+            finally:
+                gc.collect()
+
+            return result
 
     @staticmethod
     def _split_label(label: str):

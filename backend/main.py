@@ -66,14 +66,15 @@ def advisory_for(label: str):
         return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
 
     wanted = normalize(label)
-    # PlantVillage labels use Crop___Disease, while the advisory database stores
-    # the disease key without the crop prefix. Match both forms so the real
-    # class-specific treatment card is restored without changing inference.
+    # PlantVillage uses Crop___Disease while treatments.json uses Crop_Disease.
+    # Normalize both the full label and disease-only form so class-specific
+    # treatment advice is returned without touching inference/model behavior.
+    crop_disease_wanted = normalize(label.replace("___", "_"))
     disease_part = label.split("___", 1)[-1] if "___" in label else label
     disease_wanted = normalize(disease_part)
     for key, advisory in TREATMENTS.items():
         normalized_key = normalize(key)
-        if normalized_key == wanted or normalized_key == disease_wanted:
+        if normalized_key in {wanted, crop_disease_wanted, disease_wanted}:
             return advisory
 
     return {"summary": "No class-specific advisory is available in the reference database.", "actions": ["Inspect additional leaves and the surrounding crop area.", "Use integrated pest/disease management and avoid unnecessary pesticide applications.", "Follow only locally registered product labels and agricultural-extension recommendations."], "sources": []}

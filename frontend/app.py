@@ -190,22 +190,25 @@ if source is not None and image_bytes is not None:
                     if data.get("storage_status") == "unavailable": st.warning("Prediction completed, but scan history could not be saved right now.")
                     st.subheader(T["predictions"])
                     st.table([{"class": p["label"], "probability": f"{p['probability'] * 100:.2f}%"} for p in data["top_predictions"]])
-                    advisory = data.get("advisory") or {}
-
-                    # Always show the disease-fix card when an analysis succeeds.
-                    # Display-only change: inference/model/training/API behavior is untouched.
-                    with st.container(border=True):
-                        st.markdown("### 🩺 Disease fix & treatment")
-                        summary = advisory.get("summary") or "Follow the recommended disease-management steps below."
-                        st.markdown(f"**What to do:** {summary}")
-                        actions = advisory.get("actions") or []
-                        if actions:
-                            for action in actions:
-                                st.markdown(f"- {action}")
-                        else:
-                            st.info("No class-specific treatment steps are available for this result.")
-                        for source_link in advisory.get("sources", []):
-                            st.caption(source_link)
+                    # Treatment/advisory display is intentionally independent of the
+                    # glass container styling. This guarantees the card renders on
+                    # Streamlit mobile/desktop while leaving inference untouched.
+                    advisory = data.get("advisory")
+                    if not isinstance(advisory, dict):
+                        advisory = {}
+                    st.markdown("### 🩺 Disease fix & treatment")
+                    summary = advisory.get("summary") or "Follow the recommended disease-management steps below."
+                    st.markdown(f"**What to do:** {summary}")
+                    actions = advisory.get("actions")
+                    if isinstance(actions, list) and actions:
+                        for action in actions:
+                            st.markdown(f"- {action}")
+                    else:
+                        st.info("No class-specific treatment steps are available for this result.")
+                    sources = advisory.get("sources")
+                    if isinstance(sources, list):
+                        for source_link in sources:
+                            st.caption(str(source_link))
 
             except requests.RequestException as exc:
                 st.error(f"Analysis request failed: {exc}")

@@ -21,23 +21,41 @@ jobs:
           mkdir -p /tmp/artifact
           gh run download 34695021182 --repo "${{ github.repository }}" --name cropguard-training-results --dir /tmp/artifact
           test -f /tmp/artifact/plantvillage_best.keras
-      - name: Verify and replace checkpoint on current main
+      - name: Verify, stamp, and replace checkpoint on current main
         run: |
           set -euo pipefail
           python - <<'PY'
           import json, zipfile, hashlib
           from pathlib import Path
-          p=Path('/tmp/artifact/plantvillage_best.keras')
-          size=p.stat().st_size
+          src=Path('/tmp/artifact/plantvillage_best.keras')
+          size=src.stat().st_size
           assert size > 24000000, size
-          with zipfile.ZipFile(p) as z:
+          with zipfile.ZipFile(src) as z:
               cfg=json.loads(z.read('config.json'))
+              metadata=json.loads(z.read('metadata.json')) if 'metadata.json' in z.namelist() else {}
           names=[(x.get('name'),x.get('class_name')) for x in cfg['config']['layers']]
           required=[('global_average_pooling2d','GlobalAveragePooling2D'),('batch_normalization','BatchNormalization'),('dropout','Dropout'),('predictions','Dense')]
           for item in required:
               assert item in names, item
-          print('verified_size', size)
-          print('sha256', hashlib.sha256(p.read_bytes()).hexdigest())
+          expected={
+              'model_version':'cropguard-plantvillage-mobilenetv2-v1',
+              'training_script_commit':'7a570daddc44f27525ec9030756035e9129b6d29',
+              'architecture_hash':'9179243efcc7202932d5275aa0a123c9c1b3d5dbb9cef7942da97d2878ec3aef'
+          }
+          tmp=src.with_suffix('.stamped.keras')
+          with zipfile.ZipFile(src,'r') as zin, zipfile.ZipFile(tmp,'w') as zout:
+              for info in zin.infolist():
+                  data=zin.read(info.filename)
+                  if info.filename == 'metadata.json':
+                      data=json.dumps({**metadata, **expected}, separators=(',',':')).encode()
+                  zout.writestr(info, data)
+          tmp.replace(src)
+          with zipfile.ZipFile(src) as z:
+              final=json.loads(z.read('metadata.json'))
+          for k,v in expected.items(): assert final.get(k)==v, (k, final.get(k))
+          print('verified_size', src.stat().st_size)
+          print('sha256', hashlib.sha256(src.read_bytes()).hexdigest())
+          print('metadata', final)
           PY
           git fetch origin main
           git checkout -B checkpoint-replace origin/main
@@ -45,5 +63,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add models/plantvillage_best.keras
-          git commit -m 'Replace stale checkpoint with verified 10+6 trained artifact'
+          git commit -m 'Replace stale checkpoint with stamped 10+6 trained artifact'
           git push origin HEAD:main --force-with-lease=refs/heads/main:$(git rev-parse origin/main)

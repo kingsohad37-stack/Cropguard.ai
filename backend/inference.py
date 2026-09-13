@@ -18,9 +18,9 @@ _INFERENCE_LOCK = threading.Lock()
 logger = logging.getLogger("cropguard.inference")
 MODEL_VERSION = "cropguard-plantvillage-mobilenetv2-v1"
 TRAINING_SCRIPT_COMMIT = "7a570daddc44f27525ec9030756035e9129b6d29"
-# This is the architecture hash stamped into the existing 10+6 trained checkpoint.
-# Do not retrain: the backend loader must validate against the artifact it serves.
-EXPECTED_ARCHITECTURE_HASH = "eb0c4dcbc2ec3ddefcf47e0bbc5ef1b8c72b3ebe00842e5f98e6339a6e080751"
+# This is the architecture hash of the existing 10+6 trained checkpoint.
+# Do not retrain or replace the checkpoint.
+EXPECTED_ARCHITECTURE_HASH = "9179243efcc7202932d5275aa0a123c9c1b3d5dbb9cef7942da97d2878ec3aef"
 
 
 def _architecture_hash(model: tf.keras.Model) -> str:
@@ -51,13 +51,9 @@ class InferenceEngine:
             raise RuntimeError(f"Checkpoint model_version mismatch: expected {MODEL_VERSION!r}, found {checkpoint_metadata.get('model_version')!r}.")
         if checkpoint_metadata.get("training_script_commit") != TRAINING_SCRIPT_COMMIT:
             raise RuntimeError("Checkpoint was not produced by the expected training script commit; refusing to load a potentially stale architecture.")
-        # Older stamped checkpoints may retain the training-time metadata hash
-        # even when the serialized Keras architecture hash is the authoritative
-        # runtime identity. Do not reject the real trained artifact on metadata
-        # alone; the loaded model is still verified below by _architecture_hash().
         metadata_hash = checkpoint_metadata.get("architecture_hash")
         if metadata_hash != EXPECTED_ARCHITECTURE_HASH:
-            print(f"[CropGuard] Checkpoint metadata hash differs from runtime hash; accepting stamped metadata={metadata_hash}, validating loaded architecture={EXPECTED_ARCHITECTURE_HASH}", flush=True)
+            raise RuntimeError(f"Checkpoint architecture metadata mismatch: expected {EXPECTED_ARCHITECTURE_HASH}, found {metadata_hash}.")
         print(f"[CropGuard] Loading REAL trained checkpoint: {model_path}", flush=True)
         self.model = tf.keras.models.load_model(model_path, compile=False)
         actual_hash = _architecture_hash(self.model)

@@ -61,23 +61,29 @@ def _ensure_model():
     logger.info("Existing trained model downloaded successfully: %d bytes", MODEL.stat().st_size)
 
 
-def advisory_for(label: str):
-    def normalize(value: str) -> str:
-        return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+def _normalize_treatment_key(value: str) -> str:
+    """Canonicalize a PlantVillage label and treatment key without dropping crop identity."""
+    value = value.strip().replace("___", "_")
+    value = re.sub(r"_+", "_", value)
+    value = re.sub(r"[^a-z0-9]+", "_", value.lower())
+    return value.strip("_")
 
-    wanted = normalize(label)
-    # PlantVillage uses Crop___Disease while treatments.json uses Crop_Disease.
-    # Normalize both the full label and disease-only form so class-specific
-    # treatment advice is returned without touching inference/model behavior.
-    crop_disease_wanted = normalize(label.replace("___", "_"))
-    disease_part = label.split("___", 1)[-1] if "___" in label else label
-    disease_wanted = normalize(disease_part)
+
+def advisory_for(label: str) -> dict:
+    wanted = _normalize_treatment_key(label)
     for key, advisory in TREATMENTS.items():
-        normalized_key = normalize(key)
-        if normalized_key in {wanted, crop_disease_wanted, disease_wanted}:
+        if _normalize_treatment_key(key) == wanted:
             return advisory
 
-    return {"summary": "No class-specific advisory is available in the reference database.", "actions": ["Inspect additional leaves and the surrounding crop area.", "Use integrated pest/disease management and avoid unnecessary pesticide applications.", "Follow only locally registered product labels and agricultural-extension recommendations."], "sources": []}
+    return {
+        "summary": "No class-specific advisory is available in the reference database.",
+        "actions": [
+            "Inspect additional leaves and the surrounding crop area.",
+            "Use integrated pest/disease management and avoid unnecessary pesticide applications.",
+            "Follow only locally registered product labels and agricultural-extension recommendations.",
+        ],
+        "sources": [],
+    }
 
 
 app = FastAPI(title="CropGuard AI", version="1.1.3")

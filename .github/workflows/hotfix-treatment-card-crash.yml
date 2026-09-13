@@ -1,9 +1,9 @@
 name: Hotfix treatment card crash
 
 on:
-  workflow_dispatch:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,15 +13,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Fix frontend response-key compatibility
+      - name: Patch dashboard safely
         shell: python
         run: |
           from pathlib import Path
-          p = Path('frontend/app.py')
-          s = p.read_text(encoding='utf-8')
-          if 'import base64\n' not in s:
-              s = s.replace('import os\n', 'import os\nimport base64\n', 1)
+          p = Path("frontend/app.py")
+          s = p.read_text(encoding="utf-8")
+          if "import base64\n" not in s:
+              s = s.replace("import os\n", "import os\nimport base64\n", 1)
           old = '                    st.image(data["heatmap_data_url"], caption="CAM derived from this uploaded image")'
           new = '''                    heatmap = data.get("heatmap_data_url")
                     if not heatmap and data.get("heatmap_png_base64"):
@@ -30,19 +32,24 @@ jobs:
                         st.image(heatmap, caption="CAM derived from this uploaded image")
                     else:
                         st.info("Grad-CAM visualization is unavailable for this result.")'''
-          if old not in s:
-              raise SystemExit('Expected heatmap rendering line not found')
-          s = s.replace(old, new, 1)
-          p.write_text(s, encoding='utf-8')
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif "heatmap_png_base64" not in s:
+              raise SystemExit("Expected heatmap renderer not found")
+          p.write_text(s, encoding="utf-8")
 
-      - name: Validate
+      - name: Validate dashboard
         run: python -m py_compile frontend/app.py
 
-      - name: Commit fix and remove workflow
+      - name: Commit dashboard fix and remove hotfix workflow
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add frontend/app.py .github/workflows/hotfix-treatment-card-crash.yml
-          git commit -m 'Fix frontend heatmap response compatibility'
+          git add frontend/app.py
+          if git diff --cached --quiet; then
+            echo 'Dashboard already patched; nothing to commit.'
+            exit 0
+          fi
+          git commit -m 'Fix dashboard Grad-CAM response compatibility'
           git push

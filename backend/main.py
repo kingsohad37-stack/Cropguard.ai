@@ -97,7 +97,7 @@ def startup():
         engine = InferenceEngine(str(MODEL), str(ROOT / "models" / "labels.json"))
         model_error = None
         model_traceback = None
-        logger.info("Real prediction model loaded and warmed successfully; startup=%.2fs rss_max=%.1fMB gradcam=%s", time.perf_counter() - startup_started, _memory_mb(), bool(engine.grad_model))
+        logger.info("Real prediction model loaded and warmed successfully; startup=%.2fs rss_max=%.1fMB gradcam=%s", time.perf_counter() - startup_started, _memory_mb(), bool(getattr(engine, "gradcam_available", False)))
     except Exception as exc:
         engine = None
         model_error = f"{type(exc).__name__}: {exc}"
@@ -107,7 +107,7 @@ def startup():
 
 @app.get("/health")
 def health():
-    return {"status": "ok" if engine is not None else "degraded", "model_loaded": engine is not None, "gradcam_available": bool(engine is not None and engine.grad_model is not None), "model_error": model_error, "memory_rss_max_mb": round(_memory_mb(), 1)}
+    return {"status": "ok" if engine is not None else "degraded", "model_loaded": engine is not None, "gradcam_available": bool(engine is not None and getattr(engine, "gradcam_available", False)), "model_error": model_error, "memory_rss_max_mb": round(_memory_mb(), 1)}
 
 
 @app.get("/healthz")
@@ -148,9 +148,11 @@ def predict(file: UploadFile = File(...)):
     result["advisory"] = advisory_for(result["label"])
     heatmap_png = result.pop("heatmap_png", None)
     if heatmap_png is not None:
-        result["heatmap_data_url"] = "data:image/png;base64," + base64.b64encode(heatmap_png).decode()
-    else:
-        result["heatmap_data_url"] = None
-        result["heatmap_status"] = "Grad-CAM unavailable; prediction returned without heatmap."
-    logger.info("Prediction complete: label=%s confidence=%.4f elapsed=%.2fs gradcam=%s rss_max=%.1fMB", result["label"], result["confidence"], elapsed, result.get("gradcam_available", False), _memory_mb())
+        result["heatmap_png_base64"] = base64.b64encode(heatmap_png).decode("ascii")
+    result["processing_seconds"] = round(elapsed, 3)
     return result
+
+
+@app.get("/")
+def root():
+    return {"name": "CropGuard AI", "status": "online", "health": "/health", "predict": "/predict"}

@@ -3,10 +3,12 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 import time
 import traceback
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,12 +18,37 @@ from backend.inference import InferenceEngine
 ROOT = Path(__file__).resolve().parents[1]
 TREAT = ROOT / "backend" / "treatments.json"
 METRICS = ROOT / "models" / "metrics.json"
+MODEL = ROOT / "models" / "plantvillage_best.keras"
 TREATMENTS = json.loads(TREAT.read_text(encoding="utf-8")) if TREAT.exists() else {}
 engine: InferenceEngine | None = None
 model_error: str | None = None
 model_traceback: str | None = None
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 logger = logging.getLogger("cropguard")
+
+
+def _ensure_model():
+    """Fetch the already-trained model into the deployment image when it is absent."""
+    if MODEL.exists() and MODEL.stat().st_size > 20_000_000:
+        return
+    url = os.getenv("CROPGUARD_MODEL_URL", "").strip()
+    if not url:
+        raise FileNotFoundError(f"REAL MODEL MISSING: {MODEL}. CROPGUARD_MODEL_URL is not configured.")
+    MODEL.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MODEL.with_suffix(".keras.download")
+    logger.info("Downloading existing trained CropGuard model for deployment")
+    req = Request(url, headers={"User-Agent": "CropGuard/1.0"})
+    with urlopen(req, timeout=180) as response, tmp.open("wb") as out:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            out.write(chunk)
+    if tmp.stat().st_size <= 20_000_000:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError("Downloaded model is unexpectedly small or incomplete.")
+    tmp.replace(MODEL)
+    logger.info("Existing trained model downloaded successfully: %d bytes", MODEL.stat().st_size)
 
 
 def advisory_for(label: str):
@@ -51,10 +78,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 def startup():
     global engine, model_error, model_traceback
     try:
-        engine = InferenceEngine(
-            str(ROOT / "models" / "plantvillage_best.keras"),
-            str(ROOT / "models" / "labels.json"),
-        )
+        _ensure_model()
+        engine = InferenceEngine(str(MODEL), str(ROOT / "models" / "labels.json"))
         model_error = None
         model_traceback = None
         logger.info("Real prediction model loaded and warmed successfully")

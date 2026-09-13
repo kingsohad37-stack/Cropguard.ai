@@ -20,9 +20,7 @@ jobs:
           divider = next(i for i in range(start, len(lines)) if lines[i].strip() == 'st.divider()')
           for i in range(start, divider):
               if lines[i].strip():
-                  lines[i] = '                    ' + lines[i].lstrip()
-              else:
-                  lines[i] = ''
+                  lines[i] = '                    ' + lines[i]
           lines.insert(divider, '            except requests.RequestException as exc:')
           lines.insert(divider + 1, '                st.error(f"Analysis request failed: {exc}")')
           p.write_text('\n'.join(lines) + '\n', encoding='utf-8')

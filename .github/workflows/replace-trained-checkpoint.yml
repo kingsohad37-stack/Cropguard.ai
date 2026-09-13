@@ -1,0 +1,50 @@
+name: Replace trained CropGuard checkpoint
+on:
+  push:
+    branches: [temp-model-replace]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  replace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: temp-model-replace
+      - name: Download training artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/artifact
+          gh run download 34695021182 --repo "${{ github.repository }}" --name cropguard-training-results --dir /tmp/artifact
+          test -f /tmp/artifact/plantvillage_best.keras
+      - name: Verify and push checkpoint to main
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, zipfile
+          from pathlib import Path
+          p=Path('/tmp/artifact/plantvillage_best.keras')
+          assert p.stat().st_size > 24000000, p.stat().st_size
+          with zipfile.ZipFile(p) as z:
+              meta=json.loads(z.read('metadata.json'))
+              cfg=json.loads(z.read('config.json'))
+          assert meta['model_version']=='cropguard-plantvillage-mobilenetv2-v1'
+          assert meta['training_script_commit']=='7a570daddc44f27525ec9030756035e9129b6d29'
+          assert meta['architecture_hash']=='9179243efcc7202932d5275aa0a123c9c1b3d5dbb9cef7942da97d2878ec3aef'
+          names=[(x.get('name'),x.get('class_name')) for x in cfg['config']['layers']]
+          assert ('global_average_pooling2d','GlobalAveragePooling2D') in names
+          assert ('batch_normalization','BatchNormalization') in names
+          assert ('dropout','Dropout') in names
+          assert ('predictions','Dense') in names
+          print('verified_size',p.stat().st_size)
+          PY
+          cp /tmp/artifact/plantvillage_best.keras models/plantvillage_best.keras
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add models/plantvillage_best.keras
+          git commit -m 'Replace stale checkpoint with stamped 10+6 trained artifact (arch hash 9179243e...287ec3aef)'
+          git push origin HEAD:main

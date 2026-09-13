@@ -1,0 +1,123 @@
+name: Repair CropGuard camera capture
+
+on:
+  push:
+    paths:
+      - '.github/workflows/repair-camera-capture.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Repair camera capture handoff
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('frontend/app.py')
+          s = path.read_text(encoding='utf-8')
+
+          # Remove the browser cleanup script that can stop the camera stream
+          # while a mobile capture is still active.
+          s = re.sub(
+              r'\n# Explicitly stop browser camera tracks when the page/app is backgrounded\.\ncomponents\.html\(.*?\n\)\n\nLANG = \{',
+              '\nLANG = {',
+              s,
+              count=1,
+              flags=re.S,
+          )
+
+          old = '''if "camera_capture_bytes" not in st.session_state:
+              st.session_state.camera_capture_bytes = None
+
+          camera = None
+          if st.button(T["camera"], key="open_camera"):
+              st.session_state.camera_active = True
+              st.rerun()
+
+          if st.session_state.get("camera_active", False):
+              captured = st.camera_input("Take a picture", key="camera_widget")
+              if captured is not None:
+                  st.session_state.camera_capture_bytes = captured.getvalue()
+                  st.session_state.camera_active = False
+                  st.rerun()
+              if st.button("Close camera", key="close_camera"):
+                  st.session_state.camera_active = False
+                  st.session_state.camera_capture_bytes = None
+                  st.rerun()
+
+          if st.session_state.camera_capture_bytes:
+              camera = _CameraCapture(st.session_state.camera_capture_bytes)
+
+          source = upload if upload is not None else camera
+          '''
+
+          new = '''if "camera_capture_bytes" not in st.session_state:
+              st.session_state.camera_capture_bytes = None
+          if "camera_capture_name" not in st.session_state:
+              st.session_state.camera_capture_name = "camera.jpg"
+          if "camera_capture_type" not in st.session_state:
+              st.session_state.camera_capture_type = "image/jpeg"
+
+          camera = None
+          if st.button(T["camera"], key="open_camera"):
+              st.session_state.camera_active = True
+              st.rerun()
+
+          if st.session_state.get("camera_active", False):
+              captured = st.camera_input("Take a picture", key="camera_widget")
+              if captured is not None:
+                  captured_bytes = captured.getvalue()
+                  if captured_bytes:
+                      st.session_state.camera_capture_bytes = bytes(captured_bytes)
+                      st.session_state.camera_capture_name = captured.name or "camera.jpg"
+                      st.session_state.camera_capture_type = captured.type or "image/jpeg"
+                      st.session_state.camera_active = False
+                      st.rerun()
+              if st.button("Close camera", key="close_camera"):
+                  st.session_state.camera_active = False
+                  st.session_state.camera_capture_bytes = None
+                  st.rerun()
+
+          if st.session_state.camera_capture_bytes:
+              camera = _CameraCapture(
+                  st.session_state.camera_capture_bytes,
+                  st.session_state.camera_capture_name,
+                  st.session_state.camera_capture_type,
+              )
+
+          source = upload if upload is not None else camera
+          '''
+
+          if old not in s:
+              raise SystemExit('Expected camera block not found; refusing to modify app.py')
+          s = s.replace(old, new, 1)
+
+          s = s.replace(
+              'image = Image.open(source).convert("RGB")',
+              'from io import BytesIO\n        image = Image.open(BytesIO(image_bytes)).convert("RGB")',
+              1,
+          )
+
+          path.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Validate frontend syntax
+        run: python -m py_compile frontend/app.py
+
+      - name: Commit fix and remove temporary workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/app.py
+          git rm .github/workflows/repair-camera-capture.yml
+          git commit -m 'Fix mobile camera image handoff'
+          git push
+
+# Camera-only repair; training and model files are untouched.

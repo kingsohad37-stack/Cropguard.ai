@@ -18,16 +18,13 @@ jobs:
           lines = p.read_text(encoding='utf-8').splitlines()
           start = next(i for i, line in enumerate(lines) if line.strip() == '# Always show the disease-fix card when an analysis succeeds.')
           divider = next(i for i in range(start, len(lines)) if lines[i].strip() == 'st.divider()')
-          # Put the advisory card back inside the existing analysis try block.
           for i in range(start, divider):
               if lines[i].strip():
-                  lines[i] = '            ' + lines[i].lstrip()
+                  lines[i] = '                    ' + lines[i].lstrip()
               else:
                   lines[i] = ''
-          # Restore the missing outer except before the model-evidence divider.
-          if not any(line.strip().startswith('except requests.RequestException as exc:') for line in lines[start:divider+1]):
-              lines.insert(divider, '            except requests.RequestException as exc:')
-              lines.insert(divider + 1, '                st.error(f"Analysis request failed: {exc}")')
+          lines.insert(divider, '            except requests.RequestException as exc:')
+          lines.insert(divider + 1, '                st.error(f"Analysis request failed: {exc}")')
           p.write_text('\n'.join(lines) + '\n', encoding='utf-8')
           PY
           python -m py_compile frontend/app.py

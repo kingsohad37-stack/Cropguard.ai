@@ -11,6 +11,7 @@ permissions:
 jobs:
   fix:
     runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,8 +25,8 @@ jobs:
           s = p.read_text(encoding="utf-8")
           if "import base64\n" not in s:
               s = s.replace("import os\n", "import os\nimport base64\n", 1)
-          old = '                    st.image(data["heatmap_data_url"], caption="CAM derived from this uploaded image")'
-          new = '''                    heatmap = data.get("heatmap_data_url")
+          old = 'st.image(data["heatmap_data_url"], caption="CAM derived from this uploaded image")'
+          new = '''heatmap = data.get("heatmap_data_url")
                     if not heatmap and data.get("heatmap_png_base64"):
                         heatmap = base64.b64decode(data["heatmap_png_base64"])
                     if heatmap:
@@ -33,17 +34,20 @@ jobs:
                     else:
                         st.info("Grad-CAM visualization is unavailable for this result.")'''
           if old in s:
+              line_start = s.rfind("\n", 0, s.find(old)) + 1
+              indent = s[line_start:s.find(old)].split("st.image", 1)[0]
               s = s.replace(old, new, 1)
           elif "heatmap_png_base64" not in s:
-              raise SystemExit("Expected heatmap renderer not found")
+              raise SystemExit("Expected obsolete heatmap renderer not found")
           p.write_text(s, encoding="utf-8")
 
       - name: Validate dashboard
         run: python -m py_compile frontend/app.py
 
-      - name: Commit dashboard fix and remove hotfix workflow
+      - name: Commit dashboard fix
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add frontend/app.py

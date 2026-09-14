@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -e
 
+# Render exposes one public HTTP port via $PORT. Keep FastAPI internal on 8000
+# and expose Streamlit on Render's assigned public port.
 uvicorn backend.main:app --host 127.0.0.1 --port 8000 --workers 1 &
 API_PID=$!
 
 streamlit run frontend/app.py \
   --server.address=0.0.0.0 \
-  --server.port=7860 \
+  --server.port="${PORT:-7860}" \
   --server.headless=true \
   --server.enableCORS=false \
   --server.enableXsrfProtection=false &

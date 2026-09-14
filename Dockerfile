@@ -16,8 +16,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NUMEXPR_NUM_THREADS=1 \
     CROPGUARD_API_URL=http://127.0.0.1:8000
 
-COPY requirements-api.txt requirements-ui.txt ./
-RUN pip install --no-cache-dir -r requirements-api.txt -r requirements-ui.txt
+COPY requirements-api.txt ./
+RUN pip install --no-cache-dir -r requirements-api.txt
+
+COPY requirements-ui.txt ./
+RUN pip install --no-cache-dir -r requirements-ui.txt
 
 COPY . /app
 

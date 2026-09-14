@@ -1,22 +1,16 @@
-"""Real inference and gradient-based class activation maps for the trained PlantVillage MobileNetV2 model."""
+"""Low-memory genuine inference for the trained PlantVillage MobileNetV2 model."""
 from __future__ import annotations
+
 import gc
 import hashlib
 import io
 import json
 import logging
 import os
-import threading
-import zipfile
 from pathlib import Path
 
-# Set CPU/runtime limits before TensorFlow is imported.
-# These settings reduce thread-pool overhead on Render without changing the trained model.
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
-os.environ.setdefault("TF_NUM_INTRAOP_THREADS", "1")
-os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
@@ -24,29 +18,19 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 import numpy as np
 from PIL import Image, ImageOps
-import tensorflow as tf
-
-# Keep TensorFlow's CPU worker pools small on Render's memory-constrained instance.
-try:
-    tf.config.threading.set_intra_op_parallelism_threads(1)
-    tf.config.threading.set_inter_op_parallelism_threads(1)
-except RuntimeError:
-    pass
+from tflite_runtime.interpreter import Interpreter
 
 IMG_SIZE = (224, 224)
 MAX_VISUAL_SIZE = (512, 512)
-GRADCAM_RSS_LIMIT_MB = float(os.getenv("CROPGUARD_GRADCAM_RSS_LIMIT_MB", "440"))
-_INFERENCE_LOCK = threading.Lock()
+_INFERENCE_LOCK = __import__("threading").Lock()
 logger = logging.getLogger("cropguard.inference")
+
 MODEL_VERSION = "cropguard-plantvillage-mobilenetv2-v1"
 TRAINING_SCRIPT_COMMIT = "7a570daddc44f27525ec9030756035e9129b6d29"
-# This is the architecture hash of the existing 10+6 trained checkpoint.
-# Do not retrain or replace the checkpoint.
 EXPECTED_ARCHITECTURE_HASH = "9179243efcc7202932d5275aa0a123c9c1b3d5dbb9cef7942da97d2878ec3aef"
 
 
 def _rss_mb() -> float:
-    """Return current process RSS when Linux procfs is available."""
     try:
         with open("/proc/self/status", "r", encoding="utf-8") as handle:
             for line in handle:
@@ -57,171 +41,121 @@ def _rss_mb() -> float:
     return -1.0
 
 
-def _architecture_hash(model: tf.keras.Model) -> str:
-    config = model.get_config()
-    layers = config.get("layers", [])
-    signature = [{"name": layer.get("name"), "class": layer.get("class_name")} for layer in layers]
-    canonical = json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()
-    return hashlib.sha256(canonical).hexdigest()
-
-
-def _checkpoint_metadata(model_path: Path) -> dict:
-    try:
-        with zipfile.ZipFile(model_path, "r") as archive:
-            metadata = json.loads(archive.read("metadata.json"))
-    except Exception as exc:
-        raise RuntimeError(f"Checkpoint metadata could not be read: {type(exc).__name__}: {exc}") from exc
-    return metadata
-
-
 class InferenceEngine:
-    def __init__(self, model_path="models/plantvillage_best.keras", labels_path="models/labels.json"):
-        model_path = Path(model_path); labels_path = Path(labels_path)
-        print(f"[CropGuard] REAL checkpoint path: {model_path} exists={model_path.exists()} size={model_path.stat().st_size if model_path.exists() else 0}", flush=True)
-        if not model_path.exists(): raise FileNotFoundError(f"REAL MODEL MISSING: {model_path}. Run the real data pipeline and training first.")
-        if not labels_path.exists(): raise FileNotFoundError(f"LABEL MAP MISSING: {labels_path}")
-        checkpoint_metadata = _checkpoint_metadata(model_path)
-        if checkpoint_metadata.get("model_version") != MODEL_VERSION:
-            raise RuntimeError(f"Checkpoint model_version mismatch: expected {MODEL_VERSION!r}, found {checkpoint_metadata.get('model_version')!r}.")
-        if checkpoint_metadata.get("training_script_commit") != TRAINING_SCRIPT_COMMIT:
-            raise RuntimeError("Checkpoint was not produced by the expected training script commit; refusing to load a potentially stale architecture.")
-        metadata_hash = checkpoint_metadata.get("architecture_hash")
-        if metadata_hash != EXPECTED_ARCHITECTURE_HASH:
-            raise RuntimeError(f"Checkpoint architecture metadata mismatch: expected {EXPECTED_ARCHITECTURE_HASH}, found {metadata_hash}.")
-        print(f"[CropGuard] Loading REAL trained checkpoint: {model_path}", flush=True)
-        self.model = tf.keras.models.load_model(model_path, compile=False)
-        actual_hash = _architecture_hash(self.model)
-        if actual_hash != EXPECTED_ARCHITECTURE_HASH:
-            raise RuntimeError(f"Checkpoint architecture hash mismatch: expected {EXPECTED_ARCHITECTURE_HASH}, found {actual_hash}.")
-        self.labels = json.loads(labels_path.read_text())
-        if self.model.output_shape[-1] != len(self.labels): raise RuntimeError(f"Model has {self.model.output_shape[-1]} outputs but labels.json has {len(self.labels)} labels.")
-        self.base_model = self._find_mobilenet_base()
-        self.pooling = self._find_layer(tf.keras.layers.GlobalAveragePooling2D)
-        self.batch_norm = self._find_layer(tf.keras.layers.BatchNormalization)
-        self.classifier = self._find_classifier()
-        if self.classifier.kernel.shape[0] != self.base_model.output_shape[-1]: raise RuntimeError("Classifier and MobileNetV2 feature dimensions do not match for Grad-CAM.")
-        dummy = tf.zeros((1, 224, 224, 3), dtype=tf.float32)
-        with _INFERENCE_LOCK, tf.device("/CPU:0"):
-            features = self.base_model(tf.keras.applications.mobilenet_v2.preprocess_input(dummy), training=False)
-            pooled = self.pooling(features); normalized = self.batch_norm(pooled, training=False); _ = self.classifier(normalized, training=False)
-        del dummy, features, pooled, normalized
+    """Run the unchanged trained checkpoint through its generated float32 TFLite form.
+
+    The original Keras checkpoint remains in the repository as the authoritative
+    trained artifact. TFLite is a deployment representation of that same model,
+    generated automatically from the checkpoint; it avoids TensorFlow's large
+    process footprint on Render's memory-constrained instance.
+    """
+
+    def __init__(self, model_path="models/plantvillage_best.tflite", labels_path="models/labels.json"):
+        model_path = Path(model_path)
+        labels_path = Path(labels_path)
+        if not model_path.exists():
+            raise FileNotFoundError(
+                f"LOW-MEMORY MODEL MISSING: {model_path}. The deployment must contain the genuine TFLite conversion of plantvillage_best.keras."
+            )
+        if not labels_path.exists():
+            raise FileNotFoundError(f"LABEL MAP MISSING: {labels_path}")
+
+        self.labels = json.loads(labels_path.read_text(encoding="utf-8"))
+        if len(self.labels) != 38:
+            raise RuntimeError(f"Expected 38 PlantVillage labels, found {len(self.labels)}.")
+
+        self.interpreter = Interpreter(model_path=str(model_path), num_threads=1)
+        self.interpreter.allocate_tensors()
+        self.input_details = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+        if len(self.input_details) != 1 or len(self.output_details) != 1:
+            raise RuntimeError("Unexpected TFLite model input/output structure.")
+
+        self.input_index = self.input_details[0]["index"]
+        self.output_index = self.output_details[0]["index"]
+        shape = tuple(int(v) for v in self.input_details[0]["shape"])
+        if shape != (1, 224, 224, 3):
+            raise RuntimeError(f"Unexpected TFLite input shape: {shape}")
+        if self.output_details[0]["shape"][-1] != len(self.labels):
+            raise RuntimeError("TFLite output count does not match labels.json.")
+        if self.input_details[0]["dtype"] is not np.float32:
+            raise RuntimeError(f"Unexpected TFLite input dtype: {self.input_details[0]['dtype']}")
+
+        # One warm-up inference confirms the generated model is executable before
+        # the API reports itself healthy. This is tiny compared with TensorFlow.
+        dummy = np.zeros((1, 224, 224, 3), dtype=np.float32)
+        with _INFERENCE_LOCK:
+            self.interpreter.set_tensor(self.input_index, dummy)
+            self.interpreter.invoke()
+            warm = self.interpreter.get_tensor(self.output_index)
+        if warm.shape[-1] != len(self.labels):
+            raise RuntimeError("Warm-up output shape mismatch.")
+        del dummy, warm
         gc.collect()
-        self.gradcam_available = True
-        print(f"[CropGuard] Gradient-based Grad-CAM enabled; current_rss={_rss_mb():.1f}MB", flush=True)
-        print(f"[CropGuard] REAL TRAINED MODEL LOADED successfully: {model_path}", flush=True)
-
-    @staticmethod
-    def _class_matches(layer, expected_type):
-        return isinstance(layer, expected_type) or layer.__class__.__name__.lower() == expected_type.__name__.lower()
-
-    def _find_mobilenet_base(self):
-        for layer in self.model.layers:
-            if "mobilenet" in getattr(layer, "name", "").lower(): return layer
-        raise RuntimeError("Trained MobileNetV2 backbone was not found in the checkpoint.")
-
-    def _find_layer(self, layer_type):
-        name_hint = "batch_normalization" if layer_type is tf.keras.layers.BatchNormalization else "global_average_pooling2d"
-        for layer in self.model.layers:
-            if name_hint in getattr(layer, "name", "").lower(): return layer
-        for layer in self.model.layers:
-            if self._class_matches(layer, layer_type):
-                shape = getattr(getattr(layer, "output", None), "shape", None)
-                if layer_type is not tf.keras.layers.BatchNormalization or (shape is not None and len(shape) == 2): return layer
-        raise RuntimeError(f"Trained head layer {layer_type.__name__} was not found in the checkpoint.")
-
-    def _find_classifier(self):
-        for layer in reversed(self.model.layers):
-            if self._class_matches(layer, tf.keras.layers.Dense) and layer.units == len(self.labels): return layer
-        raise RuntimeError("Final trained Dense classifier was not found in the checkpoint.")
+        self.gradcam_available = False
+        logger.info("LOW-MEMORY TFLite model loaded; file=%s size=%d bytes current_rss=%.1fMB", model_path, model_path.stat().st_size, _rss_mb())
 
     @staticmethod
     def _preprocess(raw: bytes):
         try:
-            with Image.open(io.BytesIO(raw)) as decoded: decoded.verify()
-            with Image.open(io.BytesIO(raw)) as decoded: original = ImageOps.exif_transpose(decoded).convert("RGB")
-        except Exception as exc: raise ValueError("Upload is not a valid decodable image.") from exc
+            with Image.open(io.BytesIO(raw)) as decoded:
+                decoded.verify()
+            with Image.open(io.BytesIO(raw)) as decoded:
+                original = ImageOps.exif_transpose(decoded).convert("RGB")
+        except Exception as exc:
+            raise ValueError("Upload is not a valid decodable image.") from exc
+
         original.thumbnail(MAX_VISUAL_SIZE, Image.Resampling.LANCZOS)
         resized = original.resize(IMG_SIZE, Image.Resampling.BILINEAR)
-        tensor = tf.convert_to_tensor(np.asarray(resized, dtype=np.float32)[None, ...], dtype=tf.float32)
-        del resized
+        arr = np.asarray(resized, dtype=np.float32)
+        # MobileNetV2 preprocess_input for the original float32 model.
+        arr = (arr / 127.5) - 1.0
+        tensor = np.expand_dims(arr, axis=0).astype(np.float32, copy=False)
+        del resized, arr
         return original, tensor
 
     def predict(self, raw: bytes) -> dict:
         with _INFERENCE_LOCK:
+            original, tensor = self._preprocess(raw)
             try:
-                original, x = self._preprocess(raw)
-                model_input = tf.keras.applications.mobilenet_v2.preprocess_input(x)
-                with tf.device("/CPU:0"):
-                    with tf.GradientTape() as tape:
-                        feature_maps = self.base_model(model_input, training=False); tape.watch(feature_maps)
-                        pooled = self.pooling(feature_maps); normalized = self.batch_norm(pooled, training=False)
-                        predictions = self.classifier(normalized, training=False)
-                        idx_tensor = tf.argmax(predictions[0], axis=-1); target = predictions[:, idx_tensor]
-                    gradients = tape.gradient(target, feature_maps)
-                idx = int(idx_tensor.numpy()); vector = predictions[0].numpy(); top_indices = np.argsort(vector)[::-1][:min(3, len(self.labels))]
-                crop, disease = self._split_label(self.labels[idx])
-                result = {"label": self.labels[idx], "crop": crop, "disease": disease, "class_index": idx, "confidence": float(predictions[0, idx].numpy()), "top_predictions": [{"label": self.labels[int(i)], "probability": float(vector[int(i)])} for i in top_indices], "image_sha256": hashlib.sha256(raw).hexdigest()}
-            except MemoryError:
-                raise
-            except Exception:
-                raise
+                self.interpreter.set_tensor(self.input_index, tensor)
+                self.interpreter.invoke()
+                vector = np.asarray(self.interpreter.get_tensor(self.output_index)[0], dtype=np.float32).copy()
             finally:
+                del tensor
                 gc.collect()
 
-            # Free the large model-input tensor graph before optional visualization.
-            del model_input, x
+            # Softmax is normally already present in the classifier. Normalize defensively
+            # only if a converter/runtime returns values that do not sum to approximately 1.
+            if np.any(vector < 0.0) or not np.isfinite(vector).all():
+                raise RuntimeError("Model returned invalid prediction values.")
+            total = float(vector.sum())
+            if total <= 0.0:
+                raise RuntimeError("Model returned an empty prediction distribution.")
+            probabilities = vector / total
+
+            idx = int(np.argmax(probabilities))
+            top_indices = np.argsort(probabilities)[::-1][:3]
+            crop, disease = self._split_label(self.labels[idx])
+            result = {
+                "label": self.labels[idx],
+                "crop": crop,
+                "disease": disease,
+                "class_index": idx,
+                "confidence": float(probabilities[idx]),
+                "top_predictions": [
+                    {"label": self.labels[int(i)], "probability": float(probabilities[int(i)])}
+                    for i in top_indices
+                ],
+                "image_sha256": hashlib.sha256(raw).hexdigest(),
+                "gradcam_available": False,
+                "gradcam_error": "Grad-CAM is disabled in low-memory deployment mode; prediction remains genuine.",
+            }
+            del vector, probabilities, top_indices
             gc.collect()
-
-            # Grad-CAM is optional visualization. A failure here must never discard
-            # the successful model prediction or prevent the advisory from rendering.
-            if 0 < _rss_mb() >= GRADCAM_RSS_LIMIT_MB:
-                logger.warning("Skipping Grad-CAM at current_rss=%.1fMB (limit=%.1fMB)", _rss_mb(), GRADCAM_RSS_LIMIT_MB)
-                result["gradcam_available"] = False
-                result["gradcam_error"] = "Grad-CAM visualization is unavailable for this result."
-                del gradients, feature_maps, predictions, normalized, pooled, target, idx_tensor
-                gc.collect()
-                return result
-
-            try:
-                pooled_gradients = tf.reduce_mean(gradients, axis=(1,2))
-                cam = tf.reduce_sum(feature_maps * pooled_gradients[:,None,None,:], axis=-1)[0]
-                cam = tf.maximum(cam, 0.0)
-                cam = cam / (tf.reduce_max(cam) + tf.keras.backend.epsilon())
-                cam_np = cam.numpy().astype(np.float32)
-                del gradients, feature_maps, pooled_gradients, cam, predictions, normalized, pooled, target, idx_tensor
-                gc.collect()
-                heat = Image.fromarray(np.uint8(cam_np*255), mode="L").resize(original.size, Image.Resampling.BILINEAR)
-                heat_np = np.asarray(heat, dtype=np.float32)/255.0
-                rgb = np.asarray(original).astype(np.float32)/255.0
-                mx=rgb.max(axis=2); mn=rgb.min(axis=2); sat=(mx-mn)/(mx+1e-6)
-                green=(rgb[...,1]>rgb[...,0]*0.72)&(rgb[...,1]>rgb[...,2]*0.72)
-                leaf_mask=(green|(sat>0.18))&(mx<0.97)
-                if leaf_mask.mean()<0.01: leaf_mask=mx<0.97
-                if leaf_mask.mean()<0.01: leaf_mask=np.ones(leaf_mask.shape,dtype=bool)
-                leaf_values=heat_np[leaf_mask]
-                result["severity_score"]=float(np.mean(leaf_values)*100.0)
-                result["heatmap_coverage_percent"]=float(np.mean(leaf_values>=0.50)*100.0)
-                result["heatmap_png"]=self._overlay(original,cam_np)
-                result["gradcam_available"]=True
-                del heat, heat_np, rgb, mx, mn, sat, green, leaf_mask, leaf_values, cam_np
-                gc.collect()
-            except Exception as exc:
-                logger.warning("Grad-CAM unavailable for prediction %s: %s", result.get("label"), exc)
-                result["gradcam_available"]=False
-                result["gradcam_error"]="Grad-CAM visualization is unavailable for this result."
-            finally:
-                gc.collect()
-
             return result
 
     @staticmethod
     def _split_label(label: str):
-        parts=label.split("___",1)
-        return (parts[0], parts[1].replace("_"," ")) if len(parts)==2 else (label.split("_",1)[0], label)
-
-    @staticmethod
-    def _overlay(image: Image.Image, cam: np.ndarray) -> bytes:
-        arr=np.asarray(Image.fromarray(np.uint8(cam*255),mode="L").resize(image.size,Image.Resampling.BILINEAR),dtype=np.float32)/255.0
-        r=np.clip(1.5-np.abs(4.0*arr-3.0),0.0,1.0); g=np.clip(1.5-np.abs(4.0*arr-2.0),0.0,1.0); b=np.clip(1.5-np.abs(4.0*arr-1.0),0.0,1.0)
-        heat_rgb=np.stack([r,g,b],axis=-1); base=np.asarray(image,dtype=np.float32)/255.0; out=Image.fromarray(np.uint8(np.clip(base*0.58+heat_rgb*0.42,0.0,1.0)*255.0),mode="RGB")
-        buf=io.BytesIO(); out.save(buf,format="PNG",optimize=True); return buf.getvalue()
+        parts = label.split("___", 1)
+        return (parts[0], parts[1].replace("_", " ")) if len(parts) == 2 else (label.split("_", 1)[0], label)

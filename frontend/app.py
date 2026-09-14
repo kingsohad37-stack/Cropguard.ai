@@ -54,10 +54,10 @@ hr{border:0!important;border-top:1px solid rgba(28,83,46,.14)!important}
 """,unsafe_allow_html=True)
 
 LANG = {
-    "English": {"title":"🌿 CropGuard AI", "caption":"PlantVillage-trained MobileNetV2 • real inference • live CAM", "upload_title":"📷 Upload a leaf image", "upload_help":"Drag and drop a JPG, JPEG, PNG, or WEBP image into the box below, or tap Browse files.", "camera":"Or use your camera", "ready":"Ready to analyze", "analyze":"🔬 Analyze with trained model", "spinner":"Running TensorFlow inference and CAM…", "crop":"Crop", "diagnosis":"Diagnosis", "confidence":"Model confidence", "severity":"AI-derived severity estimate", "predictions":"Other model predictions", "advisory":"Treatment advisory", "history":"Actual scan history", "language":"🌐 Language"},
-    "ಕನ್ನಡ": {"title":"🌿 CropGuard AI", "caption":"PlantVillage ತರಬೇತಿ ಪಡೆದ MobileNetV2 • ನೈಜ AI ವಿಶ್ಲೇಷಣೆ • CAM", "upload_title":"📷 ಎಲೆಯ ಚಿತ್ರವನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ", "upload_help":"JPG, JPEG, PNG ಅಥವಾ WEBP ಚಿತ್ರವನ್ನು ಇಲ್ಲಿ ಹಾಕಿ ಅಥವಾ Browse files ಒತ್ತಿರಿ.", "camera":"ಅಥವಾ ಕ್ಯಾಮೆರಾ ಬಳಸಿ", "ready":"ವಿಶ್ಲೇಷಣೆಗೆ ಸಿದ್ಧ", "analyze":"🔬 ತರಬೇತಿ ಪಡೆದ ಮಾದರಿಯಿಂದ ವಿಶ್ಲೇಷಿಸಿ", "spinner":"TensorFlow ಮತ್ತು CAM ಮೂಲಕ ವಿಶ್ಲೇಷಿಸಲಾಗುತ್ತಿದೆ…", "crop":"ಬೆಳೆ", "diagnosis":"ರೋಗನಿರ್ಣಯ", "confidence":"ಮಾದರಿ ವಿಶ್ವಾಸ", "severity":"AI ಅಂದಾಜಿನ ತೀವ್ರತೆ", "predictions":"ಇತರ ಮಾದರಿ ಮುನ್ಸೂಚನೆಗಳು", "advisory":"ಚಿಕಿತ್ಸಾ ಸಲಹೆ", "history":"ನಿಜವಾದ ಸ್ಕ್ಯಾನ್ ಇತಿಹಾಸ", "language":"🌐 ಭಾಷೆ"},
-    "मराठी": {"title":"🌿 CropGuard AI", "caption":"PlantVillage प्रशिक्षित MobileNetV2 • वास्तविक AI विश्लेषण • CAM", "upload_title":"📷 पानाचा फोटो अपलोड करा", "upload_help":"JPG, JPEG, PNG किंवा WEBP फोटो येथे टाका किंवा Browse files दाबा.", "camera":"किंवा कॅमेरा वापरा", "ready":"विश्लेषणासाठी तयार", "analyze":"🔬 प्रशिक्षित मॉडेलने विश्लेषण करा", "spinner":"TensorFlow आणि CAM द्वारे विश्लेषण सुरू आहे…", "crop":"पीक", "diagnosis":"निदान", "confidence":"मॉडेलचा विश्वास", "severity":"AI अंदाजित तीव्रता", "predictions":"इतर मॉडेल अंदाज", "advisory":"उपचार सल्ला", "history":"वास्तविक स्कॅन इतिहास", "language":"🌐 भाषा"},
-    "తెలుగు": {"title":"🌿 CropGuard AI", "caption":"PlantVillage శిక్షణ పొందిన MobileNetV2 • నిజమైన AI విశ్లేషణ • CAM", "upload_title":"📷 ఆకుల చిత్రాన్ని అప్‌లోడ్ చేయండి", "upload_help":"JPG, JPEG, PNG లేదా WEBP చిత్రాన్ని ఇక్కడ ఉంచండి లేదా Browse files నొక్కండి.", "camera":"లేదా కెమెరాను ఉపయోగించండి", "ready":"విశ్లేషణకు సిద్ధంగా ఉంది", "analyze":"🔬 శిక్షణ పొందిన మోడల్‌తో విశ్లేషించండి", "spinner":"TensorFlow మరియు CAM ద్వారా విశ్లేషిస్తోంది…", "crop":"పంట", "diagnosis":"వ్యాధి నిర్ధారణ", "confidence":"మోడల్ విశ్వాసం", "severity":"AI అంచనా తీవ్రత", "predictions":"ఇతర మోడల్ అంచనాలు", "advisory":"చికిత్సా సలహా", "history":"నిజమైన స్కాన్ చరిత్ర", "language":"🌐 భాష"},
+    "English": {"title":"🌿 CropGuard AI", "caption":"PlantVillage-trained MobileNetV2 • real inference • live CAM", "upload_title":"📷 Upload a leaf image", "upload_help":"Drag and drop a JPG, JPEG, PNG, or WEBP image into the box below, or tap Browse files.", "camera":"Or use your camera", "ready":"Ready to analyze", "analyze":"🔬 Analyze with trained model", "spinner":"Running trained-model inference…", "crop":"Crop", "diagnosis":"Diagnosis", "confidence":"Model confidence", "severity":"AI-derived severity estimate", "predictions":"Other model predictions", "advisory":"Treatment advisory", "history":"Actual scan history", "language":"🌐 Language"},
+    "ಕನ್ನಡ": {"title":"🌿 CropGuard AI", "caption":"PlantVillage ತರಬೇತಿ ಪಡೆದ MobileNetV2 • ನೈಜ AI ವಿಶ್ಲೇಷಣೆ • CAM", "upload_title":"📷 ಎಲೆಯ ಚಿತ್ರವನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ", "upload_help":"JPG, JPEG, PNG ಅಥವಾ WEBP ಚಿತ್ರವನ್ನು ಇಲ್ಲಿ ಹಾಕಿ ಅಥವಾ Browse files ಒತ್ತಿರಿ.", "camera":"ಅಥವಾ ಕ್ಯಾಮೆರಾ ಬಳಸಿ", "ready":"ವಿಶ್ಲೇಷಣೆಗೆ ಸಿದ್ಧ", "analyze":"🔬 ತರಬೇತಿ ಪಡೆದ ಮಾದರಿಯಿಂದ ವಿಶ್ಲೇಷಿಸಿ", "spinner":"ತರಬೇತಿ ಪಡೆದ ಮಾದರಿಯಿಂದ ವಿಶ್ಲೇಷಿಸಲಾಗುತ್ತಿದೆ…", "crop":"ಬೆಳೆ", "diagnosis":"ರೋಗನಿರ್ಣಯ", "confidence":"ಮಾದರಿ ವಿಶ್ವಾಸ", "severity":"AI ಅಂದಾಜಿನ ತೀವ್ರತೆ", "predictions":"ಇತರ ಮಾದರಿ ಮುನ್ಸೂಚನೆಗಳು", "advisory":"ಚಿಕಿತ್ಸಾ ಸಲಹೆ", "history":"ನಿಜವಾದ ಸ್ಕ್ಯಾನ್ ಇತಿಹಾಸ", "language":"🌐 ಭಾಷೆ"},
+    "मराठी": {"title":"🌿 CropGuard AI", "caption":"PlantVillage प्रशिक्षित MobileNetV2 • वास्तविक AI विश्लेषण • CAM", "upload_title":"📷 पानाचा फोटो अपलोड करा", "upload_help":"JPG, JPEG, PNG किंवा WEBP फोटो येथे टाका किंवा Browse files दाबा.", "camera":"किंवा कॅमेरा वापरा", "ready":"विश्लेषणासाठी तयार", "analyze":"🔬 प्रशिक्षित मॉडेलने विश्लेषण करा", "spinner":"प्रशिक्षित मॉडेलद्वारे विश्लेषण सुरू आहे…", "crop":"पीक", "diagnosis":"निदान", "confidence":"मॉडेलचा विश्वास", "severity":"AI अंदाजित तीव्रता", "predictions":"इतर मॉडेल अंदाज", "advisory":"उपचार सल्ला", "history":"वास्तविक स्कॅन इतिहास", "language":"🌐 भाषा"},
+    "తెలుగు": {"title":"🌿 CropGuard AI", "caption":"PlantVillage శిక్షణ పొందిన MobileNetV2 • నిజమైన AI విశ్లేషణ • CAM", "upload_title":"📷 ఆకుల చిత్రాన్ని అప్‌లోడ్ చేయండి", "upload_help":"JPG, JPEG, PNG లేదా WEBP చిత్రాన్ని ఇక్కడ ఉంచండి లేదా Browse files నొక్కండి.", "camera":"లేదా కెమెరాను ఉపయోగించండి", "ready":"విశ్లేషణకు సిద్ధంగా ఉంది", "analyze":"🔬 శిక్షణ పొందిన మోడల్‌తో విశ్లేషించండి", "spinner":"శిక్షణ పొందిన మోడల్‌తో విశ్లేషిస్తోంది…", "crop":"పంట", "diagnosis":"వ్యాధి నిర్ధారణ", "confidence":"మోడల్ విశ్వాసం", "severity":"AI అంచనా తీవ్రత", "predictions":"ఇతర మోడల్ అంచనాలు", "advisory":"చికిత్సా సలహా", "history":"నిజమైన స్కాన్ చరిత్ర", "language":"🌐 భాష"},
 }
 
 if "language" not in st.session_state: st.session_state.language = "English"
@@ -74,7 +74,7 @@ T = LANG[st.session_state.language]
 st.title(T["title"]); st.caption(T["caption"])
 api = os.getenv("CROPGUARD_API_URL", "").rstrip("/")
 st.subheader(T["upload_title"]); st.write(T["upload_help"])
-upload = st.file_uploader("", type=["jpg", "jpeg", "png", "webp"], label_visibility="collapsed")
+upload = st.file_uploader("Leaf image upload", type=["jpg", "jpeg", "png", "webp"], label_visibility="collapsed")
 
 if "camera_capture_bytes" not in st.session_state: st.session_state.camera_capture_bytes = None
 if "camera_capture_name" not in st.session_state: st.session_state.camera_capture_name = "camera.jpg"
@@ -122,20 +122,16 @@ if source is not None and image_bytes is not None:
                     coverage = data.get("heatmap_coverage_percent")
                     image_hash = data.get("image_sha256")
                     if coverage is not None or image_hash: st.caption(f"Leaf area above activation threshold: {float(coverage or 0):.2f}% • Image SHA-256: {image_hash or 'unavailable'}")
-
-                    # Grad-CAM is optional. Never let a missing visualization block treatment details.
                     heatmap = data.get("heatmap_data_url")
                     if not heatmap and data.get("heatmap_png_base64"):
                         try: heatmap = base64.b64decode(data["heatmap_png_base64"])
                         except (ValueError, TypeError): heatmap = None
                     if heatmap: st.image(heatmap, caption="CAM derived from this uploaded image")
-                    else: st.info("Grad-CAM visualization is unavailable for this result.")
-
+                    else: st.info("Grad-CAM visualization is unavailable in low-memory deployment mode.")
                     if data.get("storage_status") == "unavailable": st.warning("Prediction completed, but scan history could not be saved right now.")
                     st.subheader(T["predictions"])
                     predictions = data.get("top_predictions") or []
                     st.table([{"class": p.get("label", "Unknown"), "probability": f"{float(p.get('probability', 0.0)) * 100:.2f}%"} for p in predictions if isinstance(p, dict)])
-
                     advisory = data.get("advisory")
                     if not isinstance(advisory, dict): advisory = {}
                     st.markdown("### 🩺 Disease fix & treatment")
@@ -149,7 +145,6 @@ if source is not None and image_bytes is not None:
                     if isinstance(sources, list) and sources:
                         st.caption("Sources")
                         for source_link in sources: st.caption(str(source_link))
-
             except requests.RequestException as exc: st.error(f"Analysis request failed: {exc}")
 
 st.divider(); st.subheader("Model evidence")
@@ -158,14 +153,12 @@ try:
     if response.ok:
         metrics = response.json(); st.write(f"Measured held-out test accuracy: **{metrics['test_accuracy'] * 100:.2f}%**")
     else: st.info("No measured metrics yet. Run the real training and evaluation pipeline first.")
-except requests.RequestException: st.info("Start the FastAPI backend to view measured metrics.")
+except requests.RequestException: st.info("Model evidence is temporarily unavailable.")
 
-st.subheader(T["history"])
 try:
-    response = requests.get(f"{api}/history", timeout=20)
+    response = requests.get(f"{api}/history", timeout=10)
     if response.ok:
-        history = response.json(); st.dataframe(history, use_container_width=True) if history else st.info("No scans yet.")
-    else: st.info("Scan history is unavailable right now.")
-except requests.RequestException: st.info("Start the FastAPI backend to view scan history.")
-
-st.divider(); st.caption("CropGuard uses genuine model inference only; no prediction results or confidence scores are hardcoded.")
+        history = response.json()
+        if history: st.write(history)
+        else: st.caption("No persistent scan history is configured for this deployment.")
+except requests.RequestException: pass

@@ -6,15 +6,7 @@ import hashlib
 import io
 import json
 import logging
-import os
 from pathlib import Path
-
-os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-os.environ.setdefault("MKL_NUM_THREADS", "1")
-os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 import numpy as np
 from PIL import Image, ImageOps
@@ -42,21 +34,19 @@ def _rss_mb() -> float:
 
 
 class InferenceEngine:
-    """Run the unchanged trained checkpoint through its generated float32 TFLite form.
+    """Run the genuine trained checkpoint through its TFLite deployment form.
 
-    The original Keras checkpoint remains in the repository as the authoritative
-    trained artifact. TFLite is a deployment representation of that same model,
-    generated automatically from the checkpoint; it avoids TensorFlow's large
-    process footprint on Render's memory-constrained instance.
+    The Keras training graph already contains MobileNetV2's preprocess_input layer.
+    Therefore inference MUST pass decoded RGB pixels in the original 0..255 range.
+    Applying /127.5-1 here would preprocess the image twice and can collapse
+    predictions toward one class (the reported all-Tomato failure).
     """
 
     def __init__(self, model_path="models/plantvillage_best.tflite", labels_path="models/labels.json"):
         model_path = Path(model_path)
         labels_path = Path(labels_path)
         if not model_path.exists():
-            raise FileNotFoundError(
-                f"LOW-MEMORY MODEL MISSING: {model_path}. The deployment must contain the genuine TFLite conversion of plantvillage_best.keras."
-            )
+            raise FileNotFoundError(f"LOW-MEMORY MODEL MISSING: {model_path}")
         if not labels_path.exists():
             raise FileNotFoundError(f"LABEL MAP MISSING: {labels_path}")
 
@@ -81,8 +71,6 @@ class InferenceEngine:
         if self.input_details[0]["dtype"] is not np.float32:
             raise RuntimeError(f"Unexpected TFLite input dtype: {self.input_details[0]['dtype']}")
 
-        # One warm-up inference confirms the generated model is executable before
-        # the API reports itself healthy. This is tiny compared with TensorFlow.
         dummy = np.zeros((1, 224, 224, 3), dtype=np.float32)
         with _INFERENCE_LOCK:
             self.interpreter.set_tensor(self.input_index, dummy)
@@ -107,11 +95,10 @@ class InferenceEngine:
 
         original.thumbnail(MAX_VISUAL_SIZE, Image.Resampling.LANCZOS)
         resized = original.resize(IMG_SIZE, Image.Resampling.BILINEAR)
-        arr = np.asarray(resized, dtype=np.float32)
-        # MobileNetV2 preprocess_input for the original float32 model.
-        arr = (arr / 127.5) - 1.0
-        tensor = np.expand_dims(arr, axis=0).astype(np.float32, copy=False)
-        del resized, arr
+        # IMPORTANT: the trained Keras graph contains MobileNetV2 preprocess_input.
+        # Keep this tensor in 0..255 so the embedded preprocessing runs exactly once.
+        tensor = np.expand_dims(np.asarray(resized, dtype=np.float32), axis=0)
+        del resized
         return original, tensor
 
     def predict(self, raw: bytes) -> dict:
@@ -125,8 +112,6 @@ class InferenceEngine:
                 del tensor
                 gc.collect()
 
-            # Softmax is normally already present in the classifier. Normalize defensively
-            # only if a converter/runtime returns values that do not sum to approximately 1.
             if np.any(vector < 0.0) or not np.isfinite(vector).all():
                 raise RuntimeError("Model returned invalid prediction values.")
             total = float(vector.sum())

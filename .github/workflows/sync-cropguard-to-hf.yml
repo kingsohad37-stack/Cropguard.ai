@@ -1,0 +1,38 @@
+name: Sync CropGuard to Hugging Face
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "hf-space/**"
+      - "backend/**"
+      - "frontend/**"
+      - "models/labels.json"
+      - "models/metrics.json"
+      - "models/plantvillage_best.keras"
+      - "requirements-api.txt"
+      - "requirements-ui.txt"
+      - ".github/workflows/sync-cropguard-to-hf.yml"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Install Hugging Face CLI
+        run: |
+          curl -LsSf https://hf.co/cli/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Publish deployment folder to Hugging Face
+        env:
+          HF_OIDC_RESOURCE: spaces/S0had/CropGuard
+        run: |
+          hf upload S0had/CropGuard hf-space . --commit-message "Deploy CropGuard from ${GITHUB_SHA::7}"
